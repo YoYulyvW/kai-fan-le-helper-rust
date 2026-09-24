@@ -72,6 +72,8 @@ mod win {
         pub palette: crate::ui::theme::Palette,
         /// 背景画刷句柄
         pub brush: isize,
+        /// 待选择的映射内容（kind=3 时）
+        pub pending_mapping: Vec<String>,
     }
 
     pub fn run(app: App) {
@@ -129,6 +131,7 @@ mod win {
                     crate::ui::theme::ThemeMode::Auto.resolve(),
                 ),
                 brush: 0,
+                pending_mapping: Vec::new(),
             });
             let ctx_ptr = Box::into_raw(ctx);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
@@ -437,6 +440,11 @@ mod win {
         ctx.popup_kind = kind;
     }
 
+    /// 设置待选映射内容（kind=3）
+    pub fn set_pending_mapping(ctx: &mut Ctx, items: Vec<String>) {
+        ctx.pending_mapping = items;
+    }
+
     /// 选中弹窗列表项（双击）
     unsafe fn select_popup_item(ctx: &mut Ctx) {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, LB_GETCURSEL};
@@ -470,7 +478,15 @@ mod win {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                // 映射选择：取回完整文本，应用到前台/输入框
+                let text = ctx.pending_mapping.get(idx).cloned();
+                if let Some(t) = text {
+                    if let Ok(mut a) = ctx.app.lock() {
+                        a.apply_mapping_text(&t);
+                    }
+                }
+            }
         }
         close_popup(ctx);
     }
@@ -548,10 +564,11 @@ mod win {
                     SetWindowTextW(ctx.input, to_wide(&text).as_ptr());
                 }
             }
-            UiAction::ShowMappingChooser(_key, _items) => {
+            UiAction::ShowMappingChooser(_key, items) => {
                 // 弹出映射选择窗口（kind=3）
                 if ctx.hwnd != 0 {
                     let hwnd = ctx.hwnd;
+                    set_pending_mapping(ctx, items);
                     open_popup(hwnd, ctx, 3);
                 }
             }
