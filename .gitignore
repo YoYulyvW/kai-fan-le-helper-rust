@@ -12,6 +12,10 @@ rustup-init-x86.exe
 dl.log
 dl2.log
 
+# Build logs
+check.log
+test.log
+
 # OS
 Thumbs.db
 Desktop.ini
