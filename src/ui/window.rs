@@ -598,26 +598,39 @@ mod win {
         match msg {
             WM_CREATE => 0,
             m if m == WM_TRAYICON => {
-                if lparam as u32 == WM_RBUTTONUP as u32 && !ptr.is_null() {
-                    let ctx = &mut *ptr;
-                    let cmd = if let Ok(a) = ctx.app.lock() {
-                        ctx.tray
-                            .as_ref()
-                            .map(|t| {
-                                t.show_menu(
-                                    a.session.settings.auto_scan,
-                                    a.session.settings.auto_push,
-                                    a.session.settings.clear_clipboard,
-                                    a.session.settings.autostart,
-                                    &a.session.settings.hotkey,
-                                    "auto",
-                                )
-                            })
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    handle_tray_cmd(hwnd, ctx, cmd);
+                if !ptr.is_null() {
+                    // 托盘消息：鼠标事件在 lparam 低字，图标 ID 在高字
+                    let ev = (lparam & 0xFFFF) as u32;
+                    crate::utils::log(&format!("ui: tray ev={}", ev));
+                    if ev == WM_RBUTTONUP as u32 || ev == 0x007B {
+                        // 右键 / 上下文菜单：弹出托盘菜单
+                        let ctx = &mut *ptr;
+                        let cmd = if let Ok(a) = ctx.app.lock() {
+                            ctx.tray
+                                .as_ref()
+                                .map(|t| {
+                                    t.show_menu(
+                                        a.session.settings.auto_scan,
+                                        a.session.settings.auto_push,
+                                        a.session.settings.clear_clipboard,
+                                        a.session.settings.autostart,
+                                        &a.session.settings.hotkey,
+                                        "auto",
+                                    )
+                                })
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        handle_tray_cmd(hwnd, ctx, cmd);
+                    } else if ev == 0x0202 {
+                        // 左键单击：切换显示 / 隐藏
+                        if IsWindowVisible(hwnd) != 0 {
+                            ShowWindow(hwnd, SW_HIDE);
+                        } else {
+                            ShowWindow(hwnd, SW_SHOW);
+                        }
+                    }
                 }
                 0
             }
