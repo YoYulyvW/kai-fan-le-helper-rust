@@ -3,6 +3,8 @@
 //! 所有 unsafe / Win32 调用都集中在本模块内，并加注释说明。
 
 pub mod autostart;
+pub mod clipboard;
+pub mod foreground;
 pub mod hotkey;
 pub mod input;
 

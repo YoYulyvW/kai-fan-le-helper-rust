@@ -5,6 +5,7 @@
 //! - 启动 UDP 广播监听 / TCP 握手监听（后台线程）
 //! - 安装全局热键钩子（后台线程）
 //! - 通过事件通道把网络/热键事件汇聚到主循环
+//! - 处理业务闭环：热键 → 生成名字 → 判断前台 → Ctrl+V 粘贴
 
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -12,13 +13,28 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use crate::config;
 use crate::core::session::Session;
 use crate::network::{self, NetEvent};
+use crate::platform::foreground;
 use crate::platform::hotkey::{self, HotkeyEvent, HotkeyHook};
+use crate::platform::{clipboard, input};
 
 /// 应用层事件（网络 + 热键统一）
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Net(NetEvent),
     Hotkey(HotkeyEvent),
+}
+
+/// 处理事件后返回给 UI 的动作
+#[derive(Debug, Clone)]
+pub enum UiAction {
+    /// 无动作
+    None,
+    /// 在状态栏闪示文本（文本, 颜色）
+    Flash(String, String),
+    /// 把文本填入输入框
+    SetInput(String),
+    /// 选择目标内容弹窗（多条映射）
+    ShowMappingChooser(String, Vec<String>),
 }
 
 /// 后台服务集合
@@ -28,6 +44,8 @@ pub struct App {
     broadcast: network::BroadcastListener,
     handshake: network::HandshakeListener,
     hook: HotkeyHook,
+    /// 助手窗口句柄（用于前台判断）
+    pub hwnd: isize,
 }
 
 impl App {
@@ -38,7 +56,6 @@ impl App {
         // 首次运行/设置变更时同步开机自启（默认开启），与原版一致
         let _ = crate::platform::autostart::set_autostart(session.settings.autostart);
 
-        // 统一事件通道：网络线程与钩子线程共用发送端
         let (tx, rx): (Sender<AppEvent>, Receiver<AppEvent>) = channel();
 
         let net_tx = tx.clone();
@@ -51,7 +68,6 @@ impl App {
             forward_net(net_tx),
         );
 
-        // 组装初始热键列表
         let keys = build_hotkey_keys(&session);
         let hook = HotkeyHook::install(keys, forward_hotkey(tx));
 
@@ -61,73 +77,120 @@ impl App {
             broadcast,
             handshake,
             hook,
+            hwnd: 0,
         }
     }
 
-    /// 阻塞等待一个事件（供主循环使用）。
     pub fn next_event(&self) -> Option<AppEvent> {
         self.event_rx.recv().ok()
     }
 
-    /// 尝试非阻塞地取一个事件。
     pub fn try_event(&self) -> Option<AppEvent> {
         self.event_rx.try_recv().ok()
     }
 
-    /// 热键配置变化后刷新钩子按键表。
     pub fn reload_hotkeys(&self) {
         self.hook.update_keys(build_hotkey_keys(&self.session));
     }
 
-    /// 处理一个事件（核心业务），返回需要 UI 展示的状态提示（可选）。
-    pub fn handle(&mut self, ev: AppEvent) -> Option<String> {
+    /// 判断助手窗口当前是否"处于前台"（鼠标在窗口内 或 前台窗口属于本进程）
+    fn is_assistant_focused(&self) -> bool {
+        if self.hwnd != 0 && foreground::cursor_in_window(self.hwnd) {
+            return true;
+        }
+        foreground::window_belongs_to_current_process(foreground::foreground_hwnd())
+    }
+
+    /// 处理一个事件，返回 UI 需要执行的动作。
+    pub fn handle(&mut self, ev: AppEvent) -> UiAction {
         match ev {
             AppEvent::Net(NetEvent::Handshake { ip, name }) => {
                 let is_new = self.session.upsert_device(&ip, &name);
-                Some(if is_new {
-                    format!("已连接 {}", name)
-                } else {
-                    format!("切换到 {}", name)
-                })
+                UiAction::Flash(
+                    if is_new {
+                        format!("已连接 {}", name)
+                    } else {
+                        format!("切换到 {}", name)
+                    },
+                    "#34C759".to_string(),
+                )
             }
             AppEvent::Net(NetEvent::BroadcastHit(ip, _port)) => {
-                // 广播命中：先探测再入库
                 if let Some((ip, name)) = network::check_ip(
                     &ip,
                     config::PORT,
                     std::time::Duration::from_secs(1),
                 ) {
                     self.session.upsert_device(&ip, &name);
-                    Some(format!("发现 {}", name))
+                    UiAction::Flash(format!("发现 {}", name), "#34C759".to_string())
                 } else {
-                    None
+                    UiAction::None
                 }
             }
-            AppEvent::Hotkey(HotkeyEvent::Main) => {
-                let name = crate::core::generate_name();
-                Some(format!("已生成 {}", name))
-            }
-            AppEvent::Hotkey(HotkeyEvent::Mapping(key)) => {
-                let items = self.session.mappings.get(&key).cloned().unwrap_or_default();
-                match items.len() {
-                    0 => None,
-                    1 => Some(items[0].clone()),
-                    _ => Some(format!("映射 {} 有多条内容，待弹窗选择", key)),
-                }
-            }
+            AppEvent::Hotkey(HotkeyEvent::Main) => self.on_main_hotkey(),
+            AppEvent::Hotkey(HotkeyEvent::Mapping(key)) => self.on_mapping_hotkey(&key),
         }
     }
+
+    /// 主热键：生成名字 → 复制 → 判断前台 → 填入或粘贴
+    fn on_main_hotkey(&mut self) -> UiAction {
+        let name = crate::core::generate_name();
+        clipboard::set_text(&name);
+
+        if self.is_assistant_focused() {
+            // 助手窗口前台：直接填入输入框
+            UiAction::SetInput(name)
+        } else {
+            // 其它程序聚焦：模拟 Ctrl+V 粘贴
+            paste_to_foreground(&name);
+            UiAction::Flash(format!("已粘贴 {}", name), "#34C759".to_string())
+        }
+    }
+
+    /// 快捷映射热键
+    fn on_mapping_hotkey(&mut self, key: &str) -> UiAction {
+        let items = self.session.mappings.get(key).cloned().unwrap_or_default();
+        match items.len() {
+            0 => UiAction::None,
+            1 => {
+                let text = items[0].clone();
+                self.apply_mapping_text(&text);
+                UiAction::None
+            }
+            _ => UiAction::ShowMappingChooser(key.to_string(), items),
+        }
+    }
+
+    /// 应用一段映射文本：复制 → 解析分享文本 → 前台则填入，否则粘贴
+    pub fn apply_mapping_text(&mut self, text: &str) {
+        clipboard::set_text(text);
+        let parsed = self.session.ingest_share_text(text);
+        if self.is_assistant_focused() {
+            if parsed.is_none() {
+                // 由 UI 填入（这里通过事件无法直接操作 UI，交由调用方）
+            }
+        } else {
+            paste_to_foreground(text);
+        }
+    }
+}
+
+/// 在独立线程延迟发送 Ctrl+V（避免主线程键盘钩子上下文干扰注入）
+fn paste_to_foreground(_text: &str) {
+    std::thread::spawn(|| {
+        // 稍延迟，确保剪贴板就绪、前台窗口稳定
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let _ = input::send_ctrl_v();
+    });
 }
 
 impl Drop for App {
     fn drop(&mut self) {
         self.broadcast.stop();
         self.handshake.stop();
-        // hook 会在自身 Drop 中卸载
     }
 }
 
-/// 组装热键 vk -> 事件 映射表（主热键 + 快捷映射，F1 保留给主热键）
 fn build_hotkey_keys(session: &Session) -> HashMap<u32, HotkeyEvent> {
     let mut keys = HashMap::new();
     if session.settings.hotkey_enabled {
@@ -151,7 +214,6 @@ fn build_hotkey_keys(session: &Session) -> HashMap<u32, HotkeyEvent> {
     keys
 }
 
-/// 把热键事件转发到统一通道
 fn forward_hotkey(tx: Sender<AppEvent>) -> Sender<HotkeyEvent> {
     let (hot_tx, hot_rx) = channel::<HotkeyEvent>();
     std::thread::spawn(move || {
@@ -164,7 +226,6 @@ fn forward_hotkey(tx: Sender<AppEvent>) -> Sender<HotkeyEvent> {
     hot_tx
 }
 
-/// 把网络事件转发到统一通道
 fn forward_net(tx: Sender<AppEvent>) -> Sender<NetEvent> {
     let (net_tx, net_rx) = channel::<NetEvent>();
     std::thread::spawn(move || {

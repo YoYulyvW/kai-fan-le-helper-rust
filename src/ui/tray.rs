@@ -5,15 +5,13 @@
 
 #[cfg(windows)]
 mod imp {
-    use std::sync::Mutex;
-
     use windows_sys::Win32::Foundation::{HWND, POINT};
     use windows_sys::Win32::UI::Shell::{
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, SetForegroundWindow,
-        TrackPopupMenu, IDI_APPLICATION, MF_CHECKED, MF_SEPARATOR, MF_STRING, TPM_RETURNCMD,
+        TrackPopupMenu, IDI_APPLICATION, MF_SEPARATOR, MF_STRING, TPM_RETURNCMD,
         TPM_RIGHTBUTTON,
     };
 

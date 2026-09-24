@@ -1,0 +1,105 @@
+    Checking kai-fan-le-helper v0.1.0 (D:\编程\zhushou\kai-fan-le-helper-rust)
+warning: unused import: `std::sync::Mutex`
+ --> src\ui\tray.rs:8:9
+  |
+8 |     use std::sync::Mutex;
+  |         ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `MF_CHECKED`
+  --> src\ui\tray.rs:16:42
+   |
+16 |         TrackPopupMenu, IDI_APPLICATION, MF_CHECKED, MF_SEPARATOR, MF_STRING, TPM_RETURNCMD,
+   |                                          ^^^^^^^^^^
+
+warning: unused imports: `DestroyWindow`, `GetMessageW`
+  --> src\ui\window.rs:32:42
+   |
+32 |         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+   |                                          ^^^^^^^^^^^^^                    ^^^^^^^^^^^
+
+warning: the item `ShowWindow` is imported redundantly
+   --> src\ui\window.rs:184:54
+    |
+34  |         ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA,
+    |         ---------- the item `ShowWindow` is already imported here
+...
+184 |                                     IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOW,
+    |                                                      ^^^^^^^^^^
+
+warning: the item `SW_SHOW` is imported redundantly
+   --> src\ui\window.rs:184:75
+    |
+35  |         IDC_ARROW, MSG, SW_SHOW, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WNDCLASSEXW,
+    |                         ------- the item `SW_SHOW` is already imported here
+...
+184 |                                     IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOW,
+    |                                                                           ^^^^^^^
+
+error[E0308]: mismatched types
+  --> src\platform\clipboard.rs:23:34
+   |
+23 |             let ptr = GlobalLock(handle) as *const u16;
+   |                       ---------- ^^^^^^ expected `*mut c_void`, found `isize`
+   |                       |
+   |                       arguments to this function are incorrect
+   |
+   = note: expected raw pointer `*mut c_void`
+                     found type `isize`
+note: function defined here
+  --> D:\编程\zhushou\kai-fan-le-helper-rust\.cargo\registry\src\rsproxy.cn-0dccff568467c15b\windows-sys-0.52.0\src\Windows\Win32\System\Memory\mod.rs:50:106
+   |
+50 | ::windows_targets::link!("kernel32.dll" "system" #[doc = "Required features: `\"Win32_Foundation\"`"] fn GlobalLock(hmem : super::super::...
+   |                                                                                                          ^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> src\platform\clipboard.rs:31:30
+   |
+31 |                 GlobalUnlock(handle);
+   |                 ------------ ^^^^^^ expected `*mut c_void`, found `isize`
+   |                 |
+   |                 arguments to this function are incorrect
+   |
+   = note: expected raw pointer `*mut c_void`
+                     found type `isize`
+note: function defined here
+  --> D:\编程\zhushou\kai-fan-le-helper-rust\.cargo\registry\src\rsproxy.cn-0dccff568467c15b\windows-sys-0.52.0\src\Windows\Win32\System\Memory\mod.rs:56:106
+   |
+56 | ::windows_targets::link!("kernel32.dll" "system" #[doc = "Required features: `\"Win32_Foundation\"`"] fn GlobalUnlock(hmem : super::super...
+   |                                                                                                          ^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> src\platform\clipboard.rs:58:20
+   |
+58 |         if hmem == 0 {
+   |            ----    ^ expected `*mut c_void`, found `usize`
+   |            |
+   |            expected because this is `*mut c_void`
+   |
+   = note: expected raw pointer `*mut c_void`
+                     found type `usize`
+help: if you meant to create a null pointer, use `std::ptr::null_mut()`
+   |
+58 |         if hmem == std::ptr::null_mut() {
+   |                    ~~~~~~~~~~~~~~~~~~~~
+
+error[E0308]: mismatched types
+   --> src\platform\clipboard.rs:69:42
+    |
+69  |         SetClipboardData(CF_UNICODETEXT, hmem);
+    |         ----------------                 ^^^^ expected `isize`, found `*mut c_void`
+    |         |
+    |         arguments to this function are incorrect
+    |
+    = note:     expected type `isize`
+            found raw pointer `*mut c_void`
+note: function defined here
+   --> D:\编程\zhushou\kai-fan-le-helper-rust\.cargo\registry\src\rsproxy.cn-0dccff568467c15b\windows-sys-0.52.0\src\Windows\Win32\System\DataExchange\mod.rs:108:104
+    |
+108 | ::windows_targets::link!("user32.dll" "system" #[doc = "Required features: `\"Win32_Foundation\"`"] fn SetClipboardData(uformat : u32, hm...
+    |                                                                                                        ^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0308`.
+warning: `kai-fan-le-helper` (bin "kai-fan-le-helper") generated 5 warnings
+error: could not compile `kai-fan-le-helper` (bin "kai-fan-le-helper") due to 4 previous errors; 5 warnings emitted

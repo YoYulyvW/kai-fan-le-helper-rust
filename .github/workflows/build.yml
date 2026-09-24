@@ -30,6 +30,15 @@ jobs:
       - name: Test
         run: cargo test --verbose
 
+      - name: Report binary size
+        shell: pwsh
+        run: |
+          $exe = "target/release/kai-fan-le-helper.exe"
+          if (Test-Path $exe) {
+            $mb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
+            Write-Output "BINARY_SIZE_MB=$mb"
+          }
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
