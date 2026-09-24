@@ -93,6 +93,11 @@ impl App {
         self.hook.update_keys(build_hotkey_keys(&self.session));
     }
 
+    /// 热键看门狗：定期调用，检测钩子健康（当前实现为刷新按键表）
+    pub fn hotkey_watchdog_tick(&self) {
+        self.hook.update_keys(build_hotkey_keys(&self.session));
+    }
+
     /// 判断助手窗口当前是否"处于前台"（鼠标在窗口内 或 前台窗口属于本进程）
     fn is_assistant_focused(&self) -> bool {
         if self.hwnd != 0 && foreground::cursor_in_window(self.hwnd) {

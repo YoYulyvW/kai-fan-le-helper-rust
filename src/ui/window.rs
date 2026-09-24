@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::app::{App, AppEvent, UiAction};
 use crate::config::{WIN_HEIGHT, WIN_WIDTH};
-use crate::ui::tray::{Tray, ID_QUIT, ID_RESCAN, ID_SHOW, WM_TRAYICON};
+use crate::ui::tray::{Tray, WM_TRAYICON};
 
 /// 窗口类名
 const CLASS_NAME: &str = "KaiFanLeHelperWnd";
@@ -66,6 +66,8 @@ mod win {
         pub last_clipboard: String,
         /// 上次心跳时间
         pub last_heartbeat: std::time::Instant,
+        /// 上次热键看门狗时间
+        pub last_watchdog: std::time::Instant,
     }
 
     pub fn run(app: App) {
@@ -118,6 +120,7 @@ mod win {
                 popup_kind: 0,
                 last_clipboard: String::new(),
                 last_heartbeat: std::time::Instant::now(),
+                last_watchdog: std::time::Instant::now(),
             });
             let ctx_ptr = Box::into_raw(ctx);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
@@ -175,6 +178,16 @@ mod win {
                     {
                         ctx.last_heartbeat = std::time::Instant::now();
                         run_heartbeat(ctx);
+                    }
+
+                    // 热键看门狗（每 HOTKEY_WATCHDOG_INTERVAL 秒）
+                    if ctx.last_watchdog.elapsed()
+                        >= std::time::Duration::from_secs(crate::config::HOTKEY_WATCHDOG_INTERVAL)
+                    {
+                        ctx.last_watchdog = std::time::Instant::now();
+                        if let Ok(a) = ctx.app.lock() {
+                            a.hotkey_watchdog_tick();
+                        }
                     }
                 }
 
@@ -246,6 +259,65 @@ mod win {
         mk_btn("🎲", ID_BTN_NAME, 246, 28);
         mk_btn("发送", ID_BTN_SEND, 276, 48);
         mk_btn("✕", ID_BTN_CLOSE, 328, 22);
+    }
+
+    /// 处理托盘菜单命令
+    unsafe fn handle_tray_command(hwnd: HWND, ctx: &mut Ctx, cmd: usize) {
+        use crate::ui::tray::*;
+        match cmd {
+            ID_SHOW => {
+                use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SW_HIDE};
+                if IsWindowVisible(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_HIDE);
+                } else {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
+            }
+            ID_RESCAN => {
+                if let Ok(mut a) = ctx.app.lock() {
+                    a.session.set_discovering(false);
+                }
+                set_status(ctx, "● 扫描中");
+            }
+            ID_AUTO_SCAN => toggle_setting(ctx, |s| s.auto_scan = !s.auto_scan),
+            ID_AUTO_PUSH => toggle_setting(ctx, |s| s.auto_push = !s.auto_push),
+            ID_CLEAR_CLIP => toggle_setting(ctx, |s| s.clear_clipboard = !s.clear_clipboard),
+            ID_AUTOSTART => {
+                let enabled = if let Ok(mut a) = ctx.app.lock() {
+                    a.session.settings.autostart = !a.session.settings.autostart;
+                    a.session.settings.save();
+                    let v = a.session.settings.autostart;
+                    crate::platform::autostart::set_autostart(v);
+                    v
+                } else {
+                    false
+                };
+                set_status(ctx, if enabled { "● 已开启自启" } else { "● 已关闭自启" });
+            }
+            ID_QUIT => PostQuitMessage(0),
+            c if (ID_HOTKEY_BASE..ID_HOTKEY_BASE + 13).contains(&c) => {
+                let n = c - ID_HOTKEY_BASE;
+                let key = format!("F{}", n);
+                if let Ok(mut a) = ctx.app.lock() {
+                    a.session.settings.hotkey = key.clone();
+                    a.session.settings.save();
+                    a.reload_hotkeys();
+                }
+                set_status(ctx, &format!("● 热键 {}", key));
+            }
+            c if (ID_THEME_AUTO..=ID_THEME_DARK).contains(&c) => {
+                set_status(ctx, "● 主题已切换");
+            }
+            _ => {}
+        }
+    }
+
+    /// 切换一个设置项并持久化
+    unsafe fn toggle_setting<F: FnOnce(&mut crate::config::Settings)>(ctx: &Ctx, f: F) {
+        if let Ok(mut a) = ctx.app.lock() {
+            f(&mut a.session.settings);
+            a.session.settings.save();
+        }
     }
 
     /// 打开弹窗（1=设备 2=历史 3=映射）
@@ -476,26 +548,24 @@ mod win {
                     let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
                     if !ptr.is_null() {
                         let ctx = &mut *ptr;
-                        let cmd = ctx.tray.as_ref().map(|t| t.show_menu()).unwrap_or(0);
-                        match cmd {
-                            ID_SHOW => {
-                                use windows_sys::Win32::UI::WindowsAndMessaging::{
-                                    IsWindowVisible, SW_HIDE,
-                                };
-                                if IsWindowVisible(hwnd) != 0 {
-                                    ShowWindow(hwnd, SW_HIDE);
-                                } else {
-                                    ShowWindow(hwnd, SW_SHOW);
-                                }
-                            }
-                            ID_RESCAN => {
-                                if let Ok(mut a) = ctx.app.lock() {
-                                    a.session.set_discovering(false);
-                                }
-                            }
-                            ID_QUIT => PostQuitMessage(0),
-                            _ => {}
-                        }
+                        let cmd = if let Ok(a) = ctx.app.lock() {
+                            ctx.tray
+                                .as_ref()
+                                .map(|t| {
+                                    t.show_menu(
+                                        a.session.settings.auto_scan,
+                                        a.session.settings.auto_push,
+                                        a.session.settings.clear_clipboard,
+                                        a.session.settings.autostart,
+                                        &a.session.settings.hotkey,
+                                        "auto",
+                                    )
+                                })
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        handle_tray_command(hwnd, ctx, cmd);
                     }
                 }
                 0
