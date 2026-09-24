@@ -79,16 +79,82 @@ mod win {
         (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
     }
 
+    /// 运行时主题（浅色/深色），字段为 COLORREF
+    #[derive(Clone, Copy)]
+    struct Theme {
+        bg_top: u32,
+        bg_bottom: u32,
+        border: u32,
+        text: u32,
+        text_sub: u32,
+        input_bg: u32,
+        btn_top: u32,
+        btn_bottom: u32,
+        btn_hover_top: u32,
+        btn_hover_bottom: u32,
+        ok: u32,
+        ok_top: u32,
+        ok_bottom: u32,
+        warn: u32,
+        err: u32,
+        white: u32,
+    }
+
+    impl Theme {
+        fn light() -> Self {
+            Theme {
+                bg_top: rgb(252, 252, 253),
+                bg_bottom: rgb(238, 238, 242),
+                border: rgb(210, 210, 214),
+                text: rgb(28, 28, 30),
+                text_sub: rgb(110, 110, 115),
+                input_bg: rgb(236, 236, 240),
+                btn_top: rgb(244, 244, 247),
+                btn_bottom: rgb(228, 228, 233),
+                btn_hover_top: rgb(236, 236, 240),
+                btn_hover_bottom: rgb(220, 220, 226),
+                ok: rgb(40, 167, 69),
+                ok_top: rgb(52, 199, 89),
+                ok_bottom: rgb(40, 175, 72),
+                warn: rgb(255, 149, 0),
+                err: rgb(255, 59, 48),
+                white: rgb(255, 255, 255),
+            }
+        }
+        fn dark() -> Self {
+            Theme {
+                bg_top: rgb(38, 38, 42),
+                bg_bottom: rgb(22, 22, 24),
+                border: rgb(58, 58, 60),
+                text: rgb(245, 245, 247),
+                text_sub: rgb(142, 142, 147),
+                input_bg: rgb(54, 54, 58),
+                btn_top: rgb(56, 56, 60),
+                btn_bottom: rgb(46, 46, 50),
+                btn_hover_top: rgb(72, 72, 78),
+                btn_hover_bottom: rgb(60, 60, 66),
+                ok: rgb(52, 199, 89),
+                ok_top: rgb(60, 210, 100),
+                ok_bottom: rgb(40, 180, 75),
+                warn: rgb(255, 149, 0),
+                err: rgb(255, 59, 48),
+                white: rgb(255, 255, 255),
+            }
+        }
+        /// 根据系统设置解析主题
+        fn detect() -> Self {
+            if crate::platform::detect_system_theme() == "dark" {
+                Theme::dark()
+            } else {
+                Theme::light()
+            }
+        }
+    }
+
+    /// 兼容旧引用的常量（浅色默认值）
     struct Colors;
     impl Colors {
-        const BG: u32 = rgb(28, 28, 30);
-        const TEXT: u32 = rgb(245, 245, 247);
-        const TEXT_SUB: u32 = rgb(142, 142, 147);
-        const INPUT_BG: u32 = rgb(54, 54, 58);
-        const BTN_BG: u32 = rgb(58, 58, 60);
-        const BTN_HOVER: u32 = rgb(78, 78, 82);
-        const OK: u32 = rgb(52, 199, 89);
-        const OK_HOVER: u32 = rgb(48, 209, 88);
+        const OK: u32 = rgb(40, 167, 69);
         const WARN: u32 = rgb(255, 149, 0);
         const ERR: u32 = rgb(255, 59, 48);
         const WHITE: u32 = rgb(255, 255, 255);
@@ -106,6 +172,7 @@ mod win {
         pub app: Arc<Mutex<App>>,
         pub tray: Option<crate::ui::tray::Tray>,
         pub gdiplus: Option<crate::ui::gdiplus::GdiPlus>,
+        pub theme: Theme,
         pub input: String,
         pub status1: String,
         pub status1_color: u32,
@@ -175,6 +242,7 @@ mod win {
                 app: app.clone(),
                 tray: None,
                 gdiplus: crate::ui::gdiplus::GdiPlus::new(),
+                theme: Theme::detect(),
                 input: String::new(),
                 status1: "● 扫描中".to_string(),
                 status1_color: Colors::WARN,
@@ -371,14 +439,14 @@ mod win {
         let old_bmp = SelectObject(mem_dc, mem_bmp);
 
         let scale = DPI_SCALE.load(Ordering::Relaxed) as f32 / 100.0;
+        let th = &ctx.theme;
         if let Some(g) = Graphics::from_hdc(mem_dc as isize) {
             let f = |v: i32| v as f32 * scale;
 
-            // 背景：深色竖向渐变圆角
+            // 背景：主题渐变圆角
             g.fill_round_grad(
                 0.0, 0.0, f(win_w), f(win_h), f(RADIUS),
-                argb(rgb(38, 38, 42)),
-                argb(rgb(22, 22, 24)),
+                argb(th.bg_top), argb(th.bg_bottom),
             );
 
             // 状态双行
@@ -393,23 +461,23 @@ mod win {
             };
             g.text(f(STATUS_X), f(4), f(120), f(18), &s1, argb(s1c), f(13), true, false);
             if !s2.is_empty() {
-                g.text(f(STATUS_X), f(23), f(120), f(16), &s2, argb(Colors::TEXT_SUB), f(11), false, false);
+                g.text(f(STATUS_X), f(23), f(120), f(16), &s2, argb(th.text_sub), f(11), false, false);
             }
 
             // 输入框
-            g.fill_round(f(INPUT_X), f(INPUT_Y), f(INPUT_W), f(INPUT_H), f(9), argb(Colors::INPUT_BG));
+            g.fill_round(f(INPUT_X), f(INPUT_Y), f(INPUT_W), f(INPUT_H), f(9), argb(th.input_bg));
             let (shown, ic) = if ctx.input.is_empty() {
-                ("等待剪贴板...".to_string(), Colors::TEXT_SUB)
+                ("等待剪贴板...".to_string(), th.text_sub)
             } else {
-                (ctx.input.clone(), Colors::TEXT)
+                (ctx.input.clone(), th.text)
             };
             g.text(f(INPUT_X + 10), f(INPUT_Y), f(INPUT_W - 16), f(INPUT_H), &shown, argb(ic), f(13), false, false);
 
-            // 按钮（历史/起名用 emoji 图标，发送/关闭用文字）
-            draw_icon_btn(&g, &f, BTN_HISTORY_X, BTN_HISTORY_W, "📋", ctx.hover == Some(Btn::History));
-            draw_icon_btn(&g, &f, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
-            draw_btn_gp(&g, &f, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
-            draw_btn_gp(&g, &f, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
+            // 按钮
+            draw_icon_btn(&g, &f, th, BTN_HISTORY_X, BTN_HISTORY_W, "📋", ctx.hover == Some(Btn::History));
+            draw_icon_btn(&g, &f, th, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
+            draw_btn_gp(&g, &f, th, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
+            draw_btn_gp(&g, &f, th, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
         }
 
         BitBlt(hdc, 0, 0, win_w, win_h, mem_dc, 0, 0, SRCCOPY);
@@ -424,20 +492,21 @@ mod win {
     unsafe fn draw_icon_btn<F: Fn(i32) -> f32>(
         g: &crate::ui::gdiplus::Graphics,
         f: &F,
+        th: &Theme,
         x: i32,
         w: i32,
         icon: &str,
         hover: bool,
     ) {
         let (top, bottom) = if hover {
-            (rgb(72, 72, 78), rgb(60, 60, 66))
+            (th.btn_hover_top, th.btn_hover_bottom)
         } else {
-            (rgb(56, 56, 60), rgb(46, 46, 50))
+            (th.btn_top, th.btn_bottom)
         };
         g.fill_round_grad(f(x), f(BTN_Y), f(w), f(BTN_H), f(9), argb(top), argb(bottom));
         g.text_font(
             f(x), f(BTN_Y), f(w), f(BTN_H),
-            icon, argb(Colors::TEXT), f(14), false, true, "Segoe UI Emoji",
+            icon, argb(th.text), f(14), false, true, "Segoe UI Emoji",
         );
     }
 
@@ -445,6 +514,7 @@ mod win {
     unsafe fn draw_btn_gp<F: Fn(i32) -> f32>(
         g: &crate::ui::gdiplus::Graphics,
         f: &F,
+        th: &Theme,
         x: i32,
         w: i32,
         label: &str,
@@ -453,15 +523,15 @@ mod win {
     ) {
         let (top, bottom, fg) = if primary {
             let (t, b) = if hover {
-                (rgb(60, 210, 100), rgb(40, 180, 75))
+                (th.ok_top, th.ok_bottom)
             } else {
-                (rgb(52, 199, 89), rgb(40, 175, 72))
+                (th.ok_top, th.ok_bottom)
             };
-            (t, b, Colors::WHITE)
+            (t, b, th.white)
         } else if hover {
-            (rgb(72, 72, 78), rgb(60, 60, 66), Colors::TEXT)
+            (th.btn_hover_top, th.btn_hover_bottom, th.text)
         } else {
-            (rgb(56, 56, 60), rgb(46, 46, 50), Colors::TEXT)
+            (th.btn_top, th.btn_bottom, th.text)
         };
         g.fill_round_grad(
             f(x), f(BTN_Y), f(w), f(BTN_H), f(9),
