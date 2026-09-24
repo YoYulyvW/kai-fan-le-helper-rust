@@ -14,6 +14,11 @@ use crate::ui::tray::{Tray, ID_QUIT, ID_RESCAN, ID_SHOW, WM_TRAYICON};
 /// 窗口类名
 const CLASS_NAME: &str = "KaiFanLeHelperWnd";
 
+// 弹窗控件 ID
+const ID_POPUP_LIST: i32 = 2001;
+const ID_POPUP_SEARCH: i32 = 2002;
+const ID_POPUP_CLOSE: i32 = 2003;
+
 // 控件 ID
 const ID_STATUS: i32 = 1000;
 const ID_INPUT: i32 = 1001;
@@ -51,8 +56,12 @@ mod win {
     pub struct Ctx {
         pub app: Arc<Mutex<App>>,
         pub tray: Option<Tray>,
+        pub hwnd: HWND,
         pub input: HWND,
         pub status: HWND,
+        pub popup: HWND,
+        pub popup_list: HWND,
+        pub popup_kind: u8, // 0=无 1=设备 2=历史 3=映射
         /// 上次剪贴板内容（防抖去重）
         pub last_clipboard: String,
         /// 上次心跳时间
@@ -101,8 +110,12 @@ mod win {
             let ctx = Box::new(Ctx {
                 app: app.clone(),
                 tray: None,
+                hwnd,
                 input: 0,
                 status: 0,
+                popup: 0,
+                popup_list: 0,
+                popup_kind: 0,
                 last_clipboard: String::new(),
                 last_heartbeat: std::time::Instant::now(),
             });
@@ -142,12 +155,15 @@ mod win {
                 if !ptr.is_null() {
                     let ctx = &mut *ptr;
 
-                    // 处理后台事件
+                    // 处理后台事件（先取出所有动作，释放锁后再执行 UI 操作）
+                    let mut actions = Vec::new();
                     if let Ok(mut a) = ctx.app.lock() {
                         while let Some(ev) = a.try_event() {
-                            let action = a.handle(ev);
-                            apply_action(ctx, action);
+                            actions.push(a.handle(ev));
                         }
+                    }
+                    for action in actions {
+                        apply_action(ctx, action);
                     }
 
                     // 剪贴板监听（500ms 轮询，去重）
@@ -232,6 +248,142 @@ mod win {
         mk_btn("✕", ID_BTN_CLOSE, 328, 22);
     }
 
+    /// 打开弹窗（1=设备 2=历史 3=映射）
+    unsafe fn open_popup(hwnd: HWND, ctx: &mut Ctx, kind: u8) {
+        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, WS_CHILD, WS_VISIBLE, WS_BORDER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+            WS_POPUP,
+        };
+
+        close_popup(ctx);
+
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        let popup_class = to_wide("KaiFanLePopup");
+        let list_class = to_wide("LISTBOX");
+        let title = match kind {
+            1 => "📱 选择设备",
+            2 => "📋 历史记录",
+            _ => "📌 选择内容",
+        };
+
+        // 注册弹窗类（如未注册）
+        let mut wc: WNDCLASSEXW = std::mem::zeroed();
+        wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+        wc.lpfnWndProc = Some(DefWindowProcW);
+        wc.hInstance = hinstance;
+        wc.lpszClassName = popup_class.as_ptr();
+        RegisterClassExW(&wc);
+
+        let popup = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            popup_class.as_ptr(),
+            to_wide(title).as_ptr(),
+            WS_POPUP,
+            100, 100, WIN_WIDTH, 280,
+            hwnd,
+            0,
+            hinstance,
+            std::ptr::null(),
+        );
+        if popup == 0 {
+            return;
+        }
+
+        // 列表框
+        let list = CreateWindowExW(
+            0,
+            list_class.as_ptr(),
+            to_wide("").as_ptr(),
+            WS_CHILD | WS_VISIBLE | WS_BORDER,
+            8, 8, WIN_WIDTH - 24, 240,
+            popup,
+            ID_POPUP_LIST as isize as _,
+            hinstance,
+            std::ptr::null(),
+        );
+
+        // 填充列表
+        if let Ok(a) = ctx.app.lock() {
+            let items: Vec<String> = match kind {
+                1 => a
+                    .session
+                    .devices
+                    .iter()
+                    .map(|d| format!("{}  ({})", d.name, d.ip))
+                    .collect(),
+                2 => a
+                    .session
+                    .history
+                    .iter()
+                    .map(|h| h.title.clone())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            unsafe {
+                for it in &items {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, LB_ADDSTRING};
+                    SendMessageW(list, LB_ADDSTRING, 0, to_wide(it).as_ptr() as isize);
+                }
+            }
+        }
+
+        ShowWindow(popup, SW_SHOW);
+        ctx.popup = popup;
+        ctx.popup_list = list;
+        ctx.popup_kind = kind;
+    }
+
+    /// 选中弹窗列表项（双击）
+    unsafe fn select_popup_item(ctx: &mut Ctx) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, LB_GETCURSEL};
+        if ctx.popup_list == 0 {
+            return;
+        }
+        let sel = SendMessageW(ctx.popup_list, LB_GETCURSEL, 0, 0);
+        if sel < 0 {
+            return;
+        }
+        let idx = sel as usize;
+        match ctx.popup_kind {
+            1 => {
+                if let Ok(mut a) = ctx.app.lock() {
+                    if idx < a.session.devices.len() {
+                        a.session.current_index = idx;
+                    }
+                }
+            }
+            2 => {
+                let text = ctx
+                    .app
+                    .lock()
+                    .ok()
+                    .and_then(|a| a.session.history.get(idx).cloned())
+                    .map(|h| h.text);
+                if let Some(t) = text {
+                    if ctx.input != 0 {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW;
+                        SetWindowTextW(ctx.input, to_wide(&t).as_ptr());
+                    }
+                }
+            }
+            _ => {}
+        }
+        close_popup(ctx);
+    }
+
+    /// 关闭弹窗
+    unsafe fn close_popup(ctx: &mut Ctx) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyWindow, SW_HIDE};
+        if ctx.popup != 0 {
+            ShowWindow(ctx.popup, SW_HIDE);
+            DestroyWindow(ctx.popup);
+            ctx.popup = 0;
+            ctx.popup_list = 0;
+            ctx.popup_kind = 0;
+        }
+    }
+
     /// 更新状态栏文本
     unsafe fn set_status(ctx: &Ctx, text: &str) {
         if ctx.status != 0 {
@@ -281,7 +433,7 @@ mod win {
     }
 
     /// 应用 UI 动作
-    unsafe fn apply_action(ctx: &Ctx, action: UiAction) {
+    unsafe fn apply_action(ctx: &mut Ctx, action: UiAction) {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowTextW, WM_SETTEXT};
         match action {
             UiAction::None => {}
@@ -294,7 +446,11 @@ mod win {
                 }
             }
             UiAction::ShowMappingChooser(_key, _items) => {
-                // 阶段 7 弹出选择窗口
+                // 弹出映射选择窗口（kind=3）
+                if ctx.hwnd != 0 {
+                    let hwnd = ctx.hwnd;
+                    open_popup(hwnd, ctx, 3);
+                }
             }
         }
         let _ = WM_SETTEXT;
@@ -354,6 +510,9 @@ mod win {
                             use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
                             ShowWindow(hwnd, SW_HIDE);
                         }
+                        ID_BTN_HISTORY => {
+                            open_popup(hwnd, ctx, 2);
+                        }
                         ID_BTN_SEND => {
                             // 读取输入框文本并发送
                             if ctx.input != 0 {
@@ -378,6 +537,17 @@ mod win {
                                     }
                                 }
                             }
+                        }
+                        ID_POPUP_LIST => {
+                            // 列表双击选择
+                            let code = ((wparam >> 16) & 0xFFFF) as u32;
+                            if code == 2 {
+                                // LBN_DBLCLK
+                                select_popup_item(ctx);
+                            }
+                        }
+                        ID_POPUP_CLOSE => {
+                            close_popup(ctx);
                         }
                         ID_BTN_NAME => {
                             // 生成随机姓名并复制到剪贴板，同时填入输入框
