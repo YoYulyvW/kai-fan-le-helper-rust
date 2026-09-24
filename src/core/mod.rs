@@ -2,6 +2,7 @@
 //! 不依赖 Windows API，可单元测试。
 
 pub mod net;
+pub mod session;
 pub mod title;
 
 /// 抖音分享文本提示词（与原版 DOUYIN_HINTS 一致）
