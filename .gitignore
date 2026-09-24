@@ -16,6 +16,11 @@ dl2.log
 check.log
 check2.log
 test.log
+build.log
+update.log
+
+# Screenshots
+*.png
 
 # OS
 Thumbs.db
