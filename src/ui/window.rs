@@ -105,6 +105,7 @@ mod win {
     pub struct Ctx {
         pub app: Arc<Mutex<App>>,
         pub tray: Option<crate::ui::tray::Tray>,
+        pub gdiplus: Option<crate::ui::gdiplus::GdiPlus>,
         pub input: String,
         pub status1: String,
         pub status1_color: u32,
@@ -173,6 +174,7 @@ mod win {
             let ctx = Box::new(Ctx {
                 app: app.clone(),
                 tray: None,
+                gdiplus: crate::ui::gdiplus::GdiPlus::new(),
                 input: String::new(),
                 status1: "● 扫描中".to_string(),
                 status1_color: Colors::WARN,
@@ -347,49 +349,68 @@ mod win {
         w
     }
 
+    /// COLORREF(0x00BBGGRR) -> GDI+ ARGB(0xAARRGGBB)
+    fn argb(colorref: u32) -> u32 {
+        let r = colorref & 0xFF;
+        let g = (colorref >> 8) & 0xFF;
+        let b = (colorref >> 16) & 0xFF;
+        0xFF00_0000 | (r << 16) | (g << 8) | b
+    }
+
     unsafe fn paint(hwnd: HWND, ctx: &Ctx) {
+        use crate::ui::gdiplus::Graphics;
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let hdc = BeginPaint(hwnd, &mut ps);
 
         let win_w = dp(BAR_W);
         let win_h = dp(BAR_H);
 
+        // 双缓冲
         let mem_dc = CreateCompatibleDC(hdc);
         let mem_bmp = CreateCompatibleBitmap(hdc, win_w, win_h);
         let old_bmp = SelectObject(mem_dc, mem_bmp);
 
-        // 背景
-        fill_round(mem_dc, 0, 0, win_w, win_h, dp(RADIUS), Colors::BG);
+        let scale = DPI_SCALE.load(Ordering::Relaxed) as f32 / 100.0;
+        if let Some(g) = Graphics::from_hdc(mem_dc as isize) {
+            let f = |v: i32| v as f32 * scale;
 
-        // 状态双行
-        let (s1, s2, s1c) = if let Some(t) = ctx.flash_until {
-            if t.elapsed() < std::time::Duration::from_millis(1500) {
-                (ctx.flash_text.clone(), String::new(), ctx.flash_color)
+            // 背景：深色竖向渐变圆角
+            g.fill_round_grad(
+                0.0, 0.0, f(win_w), f(win_h), f(RADIUS),
+                argb(rgb(38, 38, 42)),
+                argb(rgb(22, 22, 24)),
+            );
+
+            // 状态双行
+            let (s1, s2, s1c) = if let Some(t) = ctx.flash_until {
+                if t.elapsed() < std::time::Duration::from_millis(1500) {
+                    (ctx.flash_text.clone(), String::new(), ctx.flash_color)
+                } else {
+                    (ctx.status1.clone(), ctx.status2.clone(), ctx.status1_color)
+                }
             } else {
                 (ctx.status1.clone(), ctx.status2.clone(), ctx.status1_color)
+            };
+            g.text(f(STATUS_X), f(4), f(120), f(18), &s1, argb(s1c), f(13), true, false);
+            if !s2.is_empty() {
+                g.text(f(STATUS_X), f(23), f(120), f(16), &s2, argb(Colors::TEXT_SUB), f(11), false, false);
             }
-        } else {
-            (ctx.status1.clone(), ctx.status2.clone(), ctx.status1_color)
-        };
-        draw_text_left(mem_dc, dp(STATUS_X), dp(7), &s1, s1c, 13);
-        if !s2.is_empty() {
-            draw_text_left(mem_dc, dp(STATUS_X), dp(25), &s2, Colors::TEXT_SUB, 12);
+
+            // 输入框
+            g.fill_round(f(INPUT_X), f(INPUT_Y), f(INPUT_W), f(INPUT_H), f(9), argb(Colors::INPUT_BG));
+            let (shown, ic) = if ctx.input.is_empty() {
+                ("等待剪贴板...".to_string(), Colors::TEXT_SUB)
+            } else {
+                (ctx.input.clone(), Colors::TEXT)
+            };
+            g.text(f(INPUT_X + 10), f(INPUT_Y), f(INPUT_W - 16), f(INPUT_H), &shown, argb(ic), f(13), false, false);
+
+            // 按钮（历史/起名用 emoji 图标，发送/关闭用文字）
+            draw_icon_btn(&g, &f, BTN_HISTORY_X, BTN_HISTORY_W, "📋", ctx.hover == Some(Btn::History));
+            draw_icon_btn(&g, &f, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
+            draw_btn_gp(&g, &f, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
+            draw_btn_gp(&g, &f, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
         }
-
-        // 输入框
-        fill_round(mem_dc, dp(INPUT_X), dp(INPUT_Y), dp(INPUT_W), dp(INPUT_H), dp(8), Colors::INPUT_BG);
-        let (shown, ic) = if ctx.input.is_empty() {
-            ("等待剪贴板...".to_string(), Colors::TEXT_SUB)
-        } else {
-            (ctx.input.clone(), Colors::TEXT)
-        };
-        draw_text_left(mem_dc, dp(INPUT_X) + dp(10), dp(INPUT_Y) + dp(6), &shown, ic, 13);
-
-        // 按钮
-        draw_btn(mem_dc, BTN_HISTORY_X, BTN_HISTORY_W, "历史", ctx.hover == Some(Btn::History), false);
-        draw_btn(mem_dc, BTN_NAME_X, BTN_NAME_W, "起名", ctx.hover == Some(Btn::Name), false);
-        draw_btn(mem_dc, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
-        draw_btn(mem_dc, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
 
         BitBlt(hdc, 0, 0, win_w, win_h, mem_dc, 0, 0, SRCCOPY);
 
@@ -399,14 +420,57 @@ mod win {
         EndPaint(hwnd, &ps);
     }
 
-    unsafe fn draw_btn(hdc: HDC, x: i32, w: i32, label: &str, hover: bool, primary: bool) {
-        let (bg, fg) = if primary {
-            (if hover { Colors::OK_HOVER } else { Colors::OK }, Colors::WHITE)
+    /// 用 GDI+ 画图标按钮（emoji 字体）
+    unsafe fn draw_icon_btn<F: Fn(i32) -> f32>(
+        g: &crate::ui::gdiplus::Graphics,
+        f: &F,
+        x: i32,
+        w: i32,
+        icon: &str,
+        hover: bool,
+    ) {
+        let (top, bottom) = if hover {
+            (rgb(72, 72, 78), rgb(60, 60, 66))
         } else {
-            (if hover { Colors::BTN_HOVER } else { Colors::BTN_BG }, Colors::TEXT)
+            (rgb(56, 56, 60), rgb(46, 46, 50))
         };
-        fill_round(hdc, dp(x), dp(BTN_Y), dp(w), dp(BTN_H), dp(8), bg);
-        draw_text_center(hdc, dp(x), dp(BTN_Y), dp(w), dp(BTN_H), label, fg, 13);
+        g.fill_round_grad(f(x), f(BTN_Y), f(w), f(BTN_H), f(9), argb(top), argb(bottom));
+        g.text_font(
+            f(x), f(BTN_Y), f(w), f(BTN_H),
+            icon, argb(Colors::TEXT), f(14), false, true, "Segoe UI Emoji",
+        );
+    }
+
+    /// 用 GDI+ 画按钮
+    unsafe fn draw_btn_gp<F: Fn(i32) -> f32>(
+        g: &crate::ui::gdiplus::Graphics,
+        f: &F,
+        x: i32,
+        w: i32,
+        label: &str,
+        hover: bool,
+        primary: bool,
+    ) {
+        let (top, bottom, fg) = if primary {
+            let (t, b) = if hover {
+                (rgb(60, 210, 100), rgb(40, 180, 75))
+            } else {
+                (rgb(52, 199, 89), rgb(40, 175, 72))
+            };
+            (t, b, Colors::WHITE)
+        } else if hover {
+            (rgb(72, 72, 78), rgb(60, 60, 66), Colors::TEXT)
+        } else {
+            (rgb(56, 56, 60), rgb(46, 46, 50), Colors::TEXT)
+        };
+        g.fill_round_grad(
+            f(x), f(BTN_Y), f(w), f(BTN_H), f(9),
+            argb(top), argb(bottom),
+        );
+        g.text(
+            f(x), f(BTN_Y), f(w), f(BTN_H),
+            label, argb(fg), f(13), primary, true,
+        );
     }
 
     fn hit_test(x: i32, y: i32) -> Option<Btn> {

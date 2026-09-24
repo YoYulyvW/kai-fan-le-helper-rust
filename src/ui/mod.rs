@@ -1,5 +1,6 @@
 //! 用户界面与系统托盘（原生 Win32 自绘，低内存）。
 
+pub mod gdiplus;
 pub mod theme;
 pub mod tray;
 pub mod window;
