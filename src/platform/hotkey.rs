@@ -134,6 +134,7 @@ fn run_hook_thread(
         let hmod = GetModuleHandleW(std::ptr::null());
         SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), hmod, 0)
     };
+    crate::utils::log(&format!("hotkey: SetWindowsHookExW hook={} tid={}", hook, tid));
     if hook == 0 {
         return;
     }
@@ -199,6 +200,7 @@ unsafe extern "system" fn hook_proc(
                             }
                         };
                         if fire {
+                            crate::utils::log(&format!("hotkey: fire {:?}", ev));
                             let _ = s.tx.send(ev);
                         }
                     }
