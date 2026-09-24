@@ -7,6 +7,7 @@
 //!
 //! 所有 Win32 unsafe 调用集中在本模块，并加注释。
 
+pub mod theme;
 pub mod tray;
 pub mod window;
 

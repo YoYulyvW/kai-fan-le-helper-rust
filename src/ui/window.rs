@@ -68,6 +68,10 @@ mod win {
         pub last_heartbeat: std::time::Instant,
         /// 上次热键看门狗时间
         pub last_watchdog: std::time::Instant,
+        /// 当前主题配色
+        pub palette: crate::ui::theme::Palette,
+        /// 背景画刷句柄
+        pub brush: isize,
     }
 
     pub fn run(app: App) {
@@ -121,12 +125,23 @@ mod win {
                 last_clipboard: String::new(),
                 last_heartbeat: std::time::Instant::now(),
                 last_watchdog: std::time::Instant::now(),
+                palette: crate::ui::theme::Palette::for_theme(
+                    crate::ui::theme::ThemeMode::Auto.resolve(),
+                ),
+                brush: 0,
             });
             let ctx_ptr = Box::into_raw(ctx);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
 
             // 创建子控件
             create_controls(hwnd, hinstance);
+
+            // 创建背景画刷
+            {
+                use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
+                let ctx = &mut *ctx_ptr;
+                ctx.brush = CreateSolidBrush(ctx.palette.bg) as isize;
+            }
 
             // 系统托盘
             {
@@ -306,6 +321,22 @@ mod win {
                 set_status(ctx, &format!("● 热键 {}", key));
             }
             c if (ID_THEME_AUTO..=ID_THEME_DARK).contains(&c) => {
+                use crate::ui::theme::{Palette, ThemeMode};
+                let mode = match c {
+                    ID_THEME_LIGHT => ThemeMode::Light,
+                    ID_THEME_DARK => ThemeMode::Dark,
+                    _ => ThemeMode::Auto,
+                };
+                // 更新画刷
+                if ctx.brush != 0 {
+                    use windows_sys::Win32::Graphics::Gdi::DeleteObject;
+                    DeleteObject(ctx.brush as _);
+                }
+                ctx.palette = Palette::for_theme(mode.resolve());
+                use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
+                ctx.brush = CreateSolidBrush(ctx.palette.bg) as isize;
+                // 触发重绘
+                windows_sys::Win32::Graphics::Gdi::InvalidateRect(hwnd, std::ptr::null(), 1);
                 set_status(ctx, "● 主题已切换");
             }
             _ => {}
@@ -641,6 +672,38 @@ mod win {
             WM_DESTROY => {
                 PostQuitMessage(0);
                 0
+            }
+            // 控件文本颜色
+            0x0138 | 0x0132 => {
+                // WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
+                if !ptr.is_null() {
+                    use windows_sys::Win32::Graphics::Gdi::SetTextColor;
+                    let ctx = &*ptr;
+                    let hdc = wparam as isize;
+                    SetTextColor(hdc, ctx.palette.text);
+                    if ctx.brush != 0 {
+                        return ctx.brush as LRESULT;
+                    }
+                }
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+            0x0014 => {
+                // WM_ERASEBKGND
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
+                if !ptr.is_null() {
+                    let ctx = &*ptr;
+                    if ctx.brush != 0 {
+                        use windows_sys::Win32::Foundation::RECT;
+                        use windows_sys::Win32::Graphics::Gdi::FillRect;
+                        let hdc = wparam as isize;
+                        let mut rect: RECT = std::mem::zeroed();
+                        windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rect);
+                        FillRect(hdc, &rect, ctx.brush as _);
+                        return 1;
+                    }
+                }
+                DefWindowProcW(hwnd, msg, wparam, lparam)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
