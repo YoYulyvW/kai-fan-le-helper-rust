@@ -11,10 +11,21 @@ mod imp {
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, SetForegroundWindow,
-        TrackPopupMenu, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING,
-        TPM_RETURNCMD, TPM_RIGHTBUTTON,
+        AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow,
+        TrackPopupMenu, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, TPM_RETURNCMD,
+        TPM_RIGHTBUTTON,
     };
+
+    /// 创建一个绿色圆角图标（简化：用系统 IDI_APPLICATION 回退）
+    fn make_icon() -> isize {
+        // 用系统默认应用图标即可（自定义图标需 GDI+ 绘制，后续可扩展）
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::LoadIconW(
+                0,
+                windows_sys::Win32::UI::WindowsAndMessaging::IDI_APPLICATION,
+            )
+        }
+    }
 
     /// 托盘回调消息
     pub const WM_TRAYICON: u32 = 0x8001;
@@ -58,7 +69,7 @@ mod imp {
                 nid.uID = 1;
                 nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
                 nid.uCallbackMessage = WM_TRAYICON;
-                nid.hIcon = LoadIconW(0, IDI_APPLICATION);
+                nid.hIcon = make_icon();
                 let tip: Vec<u16> = "开饭了助手\0".encode_utf16().collect();
                 let n = tip.len().min(nid.szTip.len());
                 nid.szTip[..n].copy_from_slice(&tip[..n]);
