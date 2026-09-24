@@ -1,0 +1,17 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Project-local Rust toolchain (do not commit)
+/.cargo/
+/.rustup/
+
+# Local installer / logs
+rustup-init.exe
+rustup-init-x86.exe
+dl.log
+dl2.log
+
+# OS
+Thumbs.db
+Desktop.ini

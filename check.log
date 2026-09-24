@@ -1,0 +1,88 @@
+    Checking kai-fan-le-helper v0.1.0 (D:\编程\zhushou\kai-fan-le-helper-rust)
+src\config.rs:20:11: warning: constant `SCAN_TIMEOUT` is never used
+src\config.rs:21:11: warning: constant `SCAN_MAX_WORKERS` is never used
+src\config.rs:22:11: warning: constant `HEARTBEAT_INTERVAL` is never used
+src\config.rs:23:11: warning: constant `HEARTBEAT_TIMEOUT` is never used
+src\config.rs:24:11: warning: constant `CLIPBOARD_DEBOUNCE` is never used
+src\config.rs:25:11: warning: constant `SEND_TIMEOUT` is never used
+src\config.rs:26:11: warning: constant `MAX_HISTORY` is never used
+src\config.rs:28:11: warning: constant `SCAN_BACKOFF_SEQUENCE` is never used
+src\config.rs:29:11: warning: constant `IDLE_SCAN_INTERVAL` is never used
+src\config.rs:30:11: warning: constant `KNOWN_IPS_MAX` is never used
+src\config.rs:32:11: warning: constant `WIN_WIDTH` is never used
+src\config.rs:33:11: warning: constant `WIN_HEIGHT` is never used
+src\config.rs:36:11: warning: constant `HOTKEY_WATCHDOG_INTERVAL` is never used
+src\config.rs:37:11: warning: constant `HOTKEY_WATCHDOG_FORCE_EVERY` is never used
+src\config.rs:42:11: warning: constant `MAPPING_FILE_NAME` is never used
+src\config.rs:56:8: warning: function `history_file` is never used
+src\config.rs:61:8: warning: function `exe_dir` is never used
+src\config.rs:72:4: warning: function `default_true` is never used
+src\config.rs:139:12: warning: methods `save`, `remember_ip`, and `known_ips_limited` are never used
+src\config.rs:172:8: warning: function `load_history` is never used
+src\config.rs:182:8: warning: function `save_history` is never used
+src\config.rs:189:8: warning: function `history_add` is never used
+src\config.rs:200:4: warning: function `now_mmdd_hhmm` is never used
+src\config.rs:215:8: warning: function `default_mappings` is never used
+src\config.rs:223:4: warning: function `mapping_config_path` is never used
+src\config.rs:240:4: warning: function `write_default_mapping` is never used
+src\config.rs:257:8: warning: function `load_mappings` is never used
+src\core\mod.rs:8:11: warning: constant `DOUYIN_HINTS` is never used
+src\core\mod.rs:22:8: warning: function `looks_like_douyin_share` is never used
+src\core\mod.rs:31:8: warning: function `is_noise_clipboard` is never used
+src\core\mod.rs:62:7: warning: constant `FILE_EXTS` is never used
+src\core\mod.rs:73:4: warning: function `has_file_ext` is never used
+src\core\mod.rs:87:7: warning: constant `SURNAME_POOL` is never used
+src\core\mod.rs:89:4: warning: function `male_names` is never used
+src\core\mod.rs:99:4: warning: function `female_names` is never used
+src\core\mod.rs:109:7: warning: constant `SINGLE_GIVEN` is never used
+src\core\mod.rs:116:8: warning: function `generate_name` is never used
+src\core\mod.rs:131:12: warning: struct `SimpleRng` is never constructed
+src\core\mod.rs:136:12: warning: associated items `from_time`, `next_u64`, `next_usize`, and `next_f64` are never used
+src\core\net.rs:16:12: warning: methods `is_valid_hello` and `effective_port` are never used
+src\core\net.rs:26:8: warning: function `parse_device_name` is never used
+src\core\net.rs:37:8: warning: function `response_is_ok` is never used
+src\core\net.rs:41:8: warning: function `find_subslice` is never used
+src\core\net.rs:51:8: warning: function `ping_request` is never used
+src\core\net.rs:56:8: warning: function `submit_body` is never used
+src\core\title.rs:6:7: warning: constant `CATEGORY_TAGS` is never used
+src\core\title.rs:15:7: warning: constant `PREFIX_TOKENS` is never used
+src\core\title.rs:28:7: warning: constant `CUT_TOKENS` is never used
+src\core\title.rs:34:4: warning: function `re_url` is never used
+src\core\title.rs:39:4: warning: function `re_bracket` is never used
+src\core\title.rs:44:4: warning: function `re_leading_num` is never used
+src\core\title.rs:49:4: warning: function `re_fast_suffix` is never used
+src\core\title.rs:56:4: warning: function `re_noise_date` is never used
+src\core\title.rs:61:4: warning: function `re_noise_ampm` is never used
+src\core\title.rs:66:4: warning: function `re_noise_at` is never used
+src\core\title.rs:71:4: warning: function `re_noise_short` is never used
+src\core\title.rs:77:12: warning: struct `ParsedTitle` is never constructed
+src\core\title.rs:83:8: warning: function `parse` is never used
+src\core\title.rs:122:4: warning: function `from_plain` is never used
+src\core\title.rs:126:4: warning: function `extract_from_text` is never used
+src\core\title.rs:145:4: warning: function `from_hashtag` is never used
+src\core\title.rs:175:4: warning: function `is_noise` is never used
+src\core\title.rs:197:4: warning: function `clean` is never used
+src\network\mod.rs:18:5: warning: variants `BroadcastHit` and `Handshake` are never constructed
+src\network\mod.rs:24:8: warning: function `get_local_ip` is never used
+src\network\mod.rs:34:8: warning: function `check_ip` is never used
+src\network\mod.rs:51:8: warning: function `scan_network` is never used
+src\network\mod.rs:71:4: warning: function `scan_list` is never used
+src\network\mod.rs:103:4: warning: function `ip_sort_key` is never used
+src\network\mod.rs:114:8: warning: function `ping_phone` is never used
+src\network\mod.rs:137:8: warning: function `send_to_phone` is never used
+src\network\mod.rs:166:12: warning: struct `BroadcastListener` is never constructed
+src\network\mod.rs:172:12: warning: associated items `start` and `stop` are never used
+src\network\mod.rs:211:12: warning: struct `HandshakeListener` is never constructed
+src\network\mod.rs:217:12: warning: associated items `start` and `stop` are never used
+src\network\mod.rs:282:8: warning: function `default_ports` is never used
+src\platform\mod.rs:10:8: warning: function `detect_system_theme` is never used
+src\platform\hotkey.rs:8:5: warning: variants `Main` and `Mapping` are never constructed
+src\platform\hotkey.rs:14:8: warning: function `vk_for` is never used
+src\platform\input.rs:9:8: warning: function `send_ctrl_v` is never used
+src\platform\input.rs:20:11: warning: constant `DELAY_BEFORE` is never used
+src\platform\input.rs:21:11: warning: constant `DELAY_CTRL_HOLD` is never used
+src\platform\input.rs:22:11: warning: constant `DELAY_AFTER_V` is never used
+src\platform\input.rs:23:11: warning: constant `DELAY_CTRL_UP` is never used
+src\platform\input.rs:25:8: warning: function `sleep` is never used
+warning: `kai-fan-le-helper` (bin "kai-fan-le-helper") generated 85 warnings
+    Finished dev [unoptimized + debuginfo] target(s) in 0.58s

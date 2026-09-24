@@ -1,0 +1,352 @@
+   Compiling kai-fan-le-helper v0.1.0 (D:\编程\zhushou\kai-fan-le-helper-rust)
+warning: constant `SCAN_TIMEOUT` is never used
+  --> src\config.rs:20:11
+   |
+20 | pub const SCAN_TIMEOUT: f64 = 0.3;
+   |           ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: constant `SCAN_MAX_WORKERS` is never used
+  --> src\config.rs:21:11
+   |
+21 | pub const SCAN_MAX_WORKERS: usize = 128;
+   |           ^^^^^^^^^^^^^^^^
+
+warning: constant `HEARTBEAT_INTERVAL` is never used
+  --> src\config.rs:22:11
+   |
+22 | pub const HEARTBEAT_INTERVAL: u64 = 6;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: constant `HEARTBEAT_TIMEOUT` is never used
+  --> src\config.rs:23:11
+   |
+23 | pub const HEARTBEAT_TIMEOUT: f64 = 1.5;
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: constant `CLIPBOARD_DEBOUNCE` is never used
+  --> src\config.rs:24:11
+   |
+24 | pub const CLIPBOARD_DEBOUNCE: u64 = 400;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SEND_TIMEOUT` is never used
+  --> src\config.rs:25:11
+   |
+25 | pub const SEND_TIMEOUT: u64 = 4;
+   |           ^^^^^^^^^^^^
+
+warning: constant `MAX_HISTORY` is never used
+  --> src\config.rs:26:11
+   |
+26 | pub const MAX_HISTORY: usize = 50;
+   |           ^^^^^^^^^^^
+
+warning: constant `SCAN_BACKOFF_SEQUENCE` is never used
+  --> src\config.rs:28:11
+   |
+28 | pub const SCAN_BACKOFF_SEQUENCE: [u64; 10] = [5, 5, 5, 5, 5, 5, 10, 15, 30, 60];
+   |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `IDLE_SCAN_INTERVAL` is never used
+  --> src\config.rs:29:11
+   |
+29 | pub const IDLE_SCAN_INTERVAL: u64 = 3;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: constant `KNOWN_IPS_MAX` is never used
+  --> src\config.rs:30:11
+   |
+30 | pub const KNOWN_IPS_MAX: usize = 10;
+   |           ^^^^^^^^^^^^^
+
+warning: constant `WIN_WIDTH` is never used
+  --> src\config.rs:32:11
+   |
+32 | pub const WIN_WIDTH: i32 = 380;
+   |           ^^^^^^^^^
+
+warning: constant `WIN_HEIGHT` is never used
+  --> src\config.rs:33:11
+   |
+33 | pub const WIN_HEIGHT: i32 = 44;
+   |           ^^^^^^^^^^
+
+warning: constant `HOTKEY_WATCHDOG_INTERVAL` is never used
+  --> src\config.rs:36:11
+   |
+36 | pub const HOTKEY_WATCHDOG_INTERVAL: u64 = 15;
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `HOTKEY_WATCHDOG_FORCE_EVERY` is never used
+  --> src\config.rs:37:11
+   |
+37 | pub const HOTKEY_WATCHDOG_FORCE_EVERY: u32 = 12;
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAPPING_FILE_NAME` is never used
+  --> src\config.rs:42:11
+   |
+42 | pub const MAPPING_FILE_NAME: &str = "mappings.txt";
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: function `history_file` is never used
+  --> src\config.rs:56:8
+   |
+56 | pub fn history_file() -> PathBuf {
+   |        ^^^^^^^^^^^^
+
+warning: function `exe_dir` is never used
+  --> src\config.rs:61:8
+   |
+61 | pub fn exe_dir() -> PathBuf {
+   |        ^^^^^^^
+
+warning: function `default_true` is never used
+  --> src\config.rs:72:4
+   |
+72 | fn default_true() -> bool { true }
+   |    ^^^^^^^^^^^^
+
+warning: methods `save`, `remember_ip`, and `known_ips_limited` are never used
+   --> src\config.rs:139:12
+    |
+129 | impl Settings {
+    | ------------- methods in this implementation
+...
+139 |     pub fn save(&self) {
+    |            ^^^^
+...
+146 |     pub fn remember_ip(&mut self, ip: &str) {
+    |            ^^^^^^^^^^^
+...
+155 |     pub fn known_ips_limited(&self) -> Vec<String> {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: function `load_history` is never used
+   --> src\config.rs:172:8
+    |
+172 | pub fn load_history() -> Vec<HistoryItem> {
+    |        ^^^^^^^^^^^^
+
+warning: function `save_history` is never used
+   --> src\config.rs:182:8
+    |
+182 | pub fn save_history(items: &[HistoryItem]) {
+    |        ^^^^^^^^^^^^
+
+warning: function `history_add` is never used
+   --> src\config.rs:189:8
+    |
+189 | pub fn history_add(items: &mut Vec<HistoryItem>, text: &str, title: &str) {
+    |        ^^^^^^^^^^^
+
+warning: function `now_mmdd_hhmm` is never used
+   --> src\config.rs:200:4
+    |
+200 | fn now_mmdd_hhmm() -> String {
+    |    ^^^^^^^^^^^^^
+
+warning: function `default_mappings` is never used
+   --> src\config.rs:215:8
+    |
+215 | pub fn default_mappings() -> BTreeMap<String, Vec<String>> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `mapping_config_path` is never used
+   --> src\config.rs:223:4
+    |
+223 | fn mapping_config_path() -> PathBuf {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `write_default_mapping` is never used
+   --> src\config.rs:240:4
+    |
+240 | fn write_default_mapping(path: &Path) -> std::io::Result<()> {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_mappings` is never used
+   --> src\config.rs:257:8
+    |
+257 | pub fn load_mappings() -> BTreeMap<String, Vec<String>> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `submit_body` is never used
+  --> src\core\net.rs:56:8
+   |
+56 | pub fn submit_body(text: &str) -> Vec<u8> {
+   |        ^^^^^^^^^^^
+
+warning: variants `BroadcastHit` and `Handshake` are never constructed
+  --> src\network\mod.rs:18:5
+   |
+16 | pub enum NetEvent {
+   |          -------- variants in this enum
+17 |     /// 发现设备（来自 UDP 广播）ip, port
+18 |     BroadcastHit(String, u16),
+   |     ^^^^^^^^^^^^
+19 |     /// 收到 TCP 握手 ip, device_name
+20 |     Handshake { ip: String, name: String },
+   |     ^^^^^^^^^
+   |
+   = note: `NetEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: function `get_local_ip` is never used
+  --> src\network\mod.rs:24:8
+   |
+24 | pub fn get_local_ip() -> Option<Ipv4Addr> {
+   |        ^^^^^^^^^^^^
+
+warning: function `check_ip` is never used
+  --> src\network\mod.rs:34:8
+   |
+34 | pub fn check_ip(ip: &str, port: u16, timeout: Duration) -> Option<(String, String)> {
+   |        ^^^^^^^^
+
+warning: function `scan_network` is never used
+  --> src\network\mod.rs:51:8
+   |
+51 | pub fn scan_network(port: u16, priority_ips: Vec<String>) -> Vec<(String, String)> {
+   |        ^^^^^^^^^^^^
+
+warning: function `scan_list` is never used
+  --> src\network\mod.rs:71:4
+   |
+71 | fn scan_list(ips: &[String], port: u16, timeout: Duration) -> Vec<(String, String)> {
+   |    ^^^^^^^^^
+
+warning: function `ip_sort_key` is never used
+   --> src\network\mod.rs:103:4
+    |
+103 | fn ip_sort_key(ip: &str) -> (u32, u32, u32, u32) {
+    |    ^^^^^^^^^^^
+
+warning: function `ping_phone` is never used
+   --> src\network\mod.rs:114:8
+    |
+114 | pub fn ping_phone(ip: &str, port: u16, timeout: Duration) -> bool {
+    |        ^^^^^^^^^^
+
+warning: function `send_to_phone` is never used
+   --> src\network\mod.rs:137:8
+    |
+137 | pub fn send_to_phone(ip: &str, text: &str, port: u16, timeout: Duration) -> serde_json::Value {
+    |        ^^^^^^^^^^^^^
+
+warning: struct `BroadcastListener` is never constructed
+   --> src\network\mod.rs:166:12
+    |
+166 | pub struct BroadcastListener {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: associated items `start` and `stop` are never used
+   --> src\network\mod.rs:172:12
+    |
+171 | impl BroadcastListener {
+    | ---------------------- associated items in this implementation
+172 |     pub fn start(listen_port: u16, tx: Sender<NetEvent>) -> Self {
+    |            ^^^^^
+...
+202 |     pub fn stop(&mut self) {
+    |            ^^^^
+
+warning: struct `HandshakeListener` is never constructed
+   --> src\network\mod.rs:211:12
+    |
+211 | pub struct HandshakeListener {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: associated items `start` and `stop` are never used
+   --> src\network\mod.rs:217:12
+    |
+216 | impl HandshakeListener {
+    | ---------------------- associated items in this implementation
+217 |     pub fn start(listen_port: u16, tx: Sender<NetEvent>) -> Self {
+    |            ^^^^^
+...
+274 |     pub fn stop(&mut self) {
+    |            ^^^^
+
+warning: function `default_ports` is never used
+   --> src\network\mod.rs:282:8
+    |
+282 | pub fn default_ports() -> (u16, u16, u16) {
+    |        ^^^^^^^^^^^^^
+
+warning: function `detect_system_theme` is never used
+  --> src\platform\mod.rs:10:8
+   |
+10 | pub fn detect_system_theme() -> &'static str {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: variants `Main` and `Mapping` are never constructed
+  --> src\platform\hotkey.rs:8:5
+   |
+6  | pub enum HotkeyEvent {
+   |          ----------- variants in this enum
+7  |     /// 主热键（默认 F1）触发
+8  |     Main,
+   |     ^^^^
+9  |     /// 快捷映射热键触发（如 F2/F3/F4）
+10 |     Mapping(String),
+   |     ^^^^^^^
+   |
+   = note: `HotkeyEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: function `send_ctrl_v` is never used
+ --> src\platform\input.rs:9:8
+  |
+9 | pub fn send_ctrl_v() -> bool {
+  |        ^^^^^^^^^^^
+
+warning: constant `DELAY_BEFORE` is never used
+  --> src\platform\input.rs:20:11
+   |
+20 | pub const DELAY_BEFORE: u64 = 10;
+   |           ^^^^^^^^^^^^
+
+warning: constant `DELAY_CTRL_HOLD` is never used
+  --> src\platform\input.rs:21:11
+   |
+21 | pub const DELAY_CTRL_HOLD: u64 = 40;
+   |           ^^^^^^^^^^^^^^^
+
+warning: constant `DELAY_AFTER_V` is never used
+  --> src\platform\input.rs:22:11
+   |
+22 | pub const DELAY_AFTER_V: u64 = 20;
+   |           ^^^^^^^^^^^^^
+
+warning: constant `DELAY_CTRL_UP` is never used
+  --> src\platform\input.rs:23:11
+   |
+23 | pub const DELAY_CTRL_UP: u64 = 20;
+   |           ^^^^^^^^^^^^^
+
+warning: function `sleep` is never used
+  --> src\platform\input.rs:25:8
+   |
+25 | pub fn sleep(ms: u64) {
+   |        ^^^^^
+
+warning: `kai-fan-le-helper` (bin "kai-fan-le-helper" test) generated 49 warnings
+    Finished test [unoptimized + debuginfo] target(s) in 0.80s
+     Running unittests src\main.rs (target\debug\deps\kai_fan_le_helper-ed1c27c11d1ef7c0.exe)
+
+running 12 tests
+test core::net::tests::invalid_hello ... ok
+test core::tests::douyin_detection ... ok
+test core::net::tests::ping_req_format ... ok
+test core::net::tests::parse_ping_body ... ok
+test core::tests::noise_detects_paths ... ok
+test platform::hotkey::tests::vk_mapping ... ok
+test core::tests::name_generation_nonempty ... ok
+test core::net::tests::valid_hello ... ok
+test core::title::tests::hashtag_title ... ok
+test core::title::tests::strips_url_and_prefix ... ok
+test core::title::tests::plain_title ... ok
+test core::title::tests::fast_suffix ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
