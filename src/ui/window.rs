@@ -15,6 +15,7 @@ use crate::ui::tray::{Tray, ID_QUIT, ID_RESCAN, ID_SHOW, WM_TRAYICON};
 const CLASS_NAME: &str = "KaiFanLeHelperWnd";
 
 // 控件 ID
+const ID_STATUS: i32 = 1000;
 const ID_INPUT: i32 = 1001;
 const ID_BTN_HISTORY: i32 = 1002;
 const ID_BTN_NAME: i32 = 1003;
@@ -51,6 +52,11 @@ mod win {
         pub app: Arc<Mutex<App>>,
         pub tray: Option<Tray>,
         pub input: HWND,
+        pub status: HWND,
+        /// 上次剪贴板内容（防抖去重）
+        pub last_clipboard: String,
+        /// 上次心跳时间
+        pub last_heartbeat: std::time::Instant,
     }
 
     pub fn run(app: App) {
@@ -96,6 +102,9 @@ mod win {
                 app: app.clone(),
                 tray: None,
                 input: 0,
+                status: 0,
+                last_clipboard: String::new(),
+                last_heartbeat: std::time::Instant::now(),
             });
             let ctx_ptr = Box::into_raw(ctx);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
@@ -132,11 +141,24 @@ mod win {
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
                 if !ptr.is_null() {
                     let ctx = &mut *ptr;
+
+                    // 处理后台事件
                     if let Ok(mut a) = ctx.app.lock() {
                         while let Some(ev) = a.try_event() {
                             let action = a.handle(ev);
                             apply_action(ctx, action);
                         }
+                    }
+
+                    // 剪贴板监听（500ms 轮询，去重）
+                    poll_clipboard(ctx);
+
+                    // 心跳（每 HEARTBEAT_INTERVAL 秒）
+                    if ctx.last_heartbeat.elapsed()
+                        >= std::time::Duration::from_secs(crate::config::HEARTBEAT_INTERVAL)
+                    {
+                        ctx.last_heartbeat = std::time::Instant::now();
+                        run_heartbeat(ctx);
                     }
                 }
 
@@ -153,7 +175,25 @@ mod win {
 
         let edit_class = to_wide("EDIT");
         let btn_class = to_wide("BUTTON");
+        let static_class = to_wide("STATIC");
         let empty = to_wide("");
+
+        // 状态栏（左侧）
+        let status = CreateWindowExW(
+            0,
+            static_class.as_ptr(),
+            to_wide("● 扫描中").as_ptr(),
+            WS_CHILD | WS_VISIBLE, // SS_LEFT 为 0，默认左对齐
+            6, 13, 52, 18,
+            hwnd,
+            ID_STATUS as isize as _,
+            hinstance,
+            std::ptr::null(),
+        );
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
+        if !ptr.is_null() {
+            (*ptr).status = status;
+        }
 
         // 输入框
         let input = CreateWindowExW(
@@ -192,13 +232,61 @@ mod win {
         mk_btn("✕", ID_BTN_CLOSE, 328, 22);
     }
 
+    /// 更新状态栏文本
+    unsafe fn set_status(ctx: &Ctx, text: &str) {
+        if ctx.status != 0 {
+            use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW;
+            SetWindowTextW(ctx.status, to_wide(text).as_ptr());
+        }
+    }
+
+    /// 剪贴板轮询：读取文本，去重后交给业务处理
+    fn poll_clipboard(ctx: &mut Ctx) {
+        let text = crate::platform::clipboard::get_text();
+        let text = text.trim().to_string();
+        if text.is_empty() || text == ctx.last_clipboard {
+            return;
+        }
+        ctx.last_clipboard = text.clone();
+
+        // 命中分享文本则填入输入框
+        if let Ok(mut a) = ctx.app.lock() {
+            if let Some(display) = a.on_clipboard_text(&text) {
+                unsafe {
+                    if ctx.input != 0 {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW;
+                        SetWindowTextW(ctx.input, to_wide(&display).as_ptr());
+                    }
+                }
+            }
+        }
+    }
+
+    /// 心跳：在后台探测设备离线
+    fn run_heartbeat(ctx: &mut Ctx) {
+        let offline = if let Ok(a) = ctx.app.lock() {
+            if a.session.devices.is_empty() {
+                return;
+            }
+            a.heartbeat_offline()
+        } else {
+            return;
+        };
+        if offline.is_empty() {
+            return;
+        }
+        if let Ok(mut a) = ctx.app.lock() {
+            a.apply_heartbeat(&offline);
+        }
+    }
+
     /// 应用 UI 动作
     unsafe fn apply_action(ctx: &Ctx, action: UiAction) {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowTextW, WM_SETTEXT};
         match action {
             UiAction::None => {}
-            UiAction::Flash(_text, _color) => {
-                // 状态栏文本更新（阶段 7 完善颜色渲染）
+            UiAction::Flash(text, _color) => {
+                set_status(ctx, &format!("● {}", text));
             }
             UiAction::SetInput(text) => {
                 if ctx.input != 0 {
@@ -267,7 +355,29 @@ mod win {
                             ShowWindow(hwnd, SW_HIDE);
                         }
                         ID_BTN_SEND => {
-                            // 读取输入框文本并发送（阶段 7 完善）
+                            // 读取输入框文本并发送
+                            if ctx.input != 0 {
+                                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                    GetWindowTextLengthW, GetWindowTextW, SetWindowTextW,
+                                };
+                                let len = GetWindowTextLengthW(ctx.input);
+                                if len > 0 {
+                                    let mut buf = vec![0u16; (len + 1) as usize];
+                                    GetWindowTextW(ctx.input, buf.as_mut_ptr(), len + 1);
+                                    let text = String::from_utf16_lossy(&buf[..len as usize]);
+                                    let text = text.trim().to_string();
+                                    if !text.is_empty() {
+                                        if let Ok(a) = ctx.app.lock() {
+                                            if a.send_text(&text) {
+                                                SetWindowTextW(ctx.input, to_wide("").as_ptr());
+                                                set_status(ctx, "● 已发送");
+                                            } else {
+                                                set_status(ctx, "● 未连接");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         ID_BTN_NAME => {
                             // 生成随机姓名并复制到剪贴板，同时填入输入框

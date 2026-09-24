@@ -173,6 +173,55 @@ impl App {
             paste_to_foreground(text);
         }
     }
+
+    /// 发送文本到当前选中设备（在后台线程执行，结果通过事件回传）
+    pub fn send_text(&self, text: &str) -> bool {
+        let ip = match self.session.current_ip() {
+            Some(ip) => ip.to_string(),
+            None => return false,
+        };
+        let text = text.to_string();
+        std::thread::spawn(move || {
+            let _ = network::send_to_phone(
+                &ip,
+                &text,
+                config::PORT,
+                std::time::Duration::from_secs(config::SEND_TIMEOUT),
+            );
+        });
+        true
+    }
+
+    /// 心跳：探测所有设备，返回离线的 IP 列表
+    pub fn heartbeat_offline(&self) -> Vec<String> {
+        let snapshot: Vec<String> = self
+            .session
+            .devices
+            .iter()
+            .map(|d| d.ip.clone())
+            .collect();
+        let mut offline = Vec::new();
+        for ip in snapshot {
+            if !network::ping_phone(
+                &ip,
+                config::PORT,
+                std::time::Duration::from_millis((config::HEARTBEAT_TIMEOUT * 1000.0) as u64),
+            ) {
+                offline.push(ip);
+            }
+        }
+        offline
+    }
+
+    /// 应用心跳结果：移除离线设备，返回是否有变化
+    pub fn apply_heartbeat(&mut self, offline: &[String]) -> bool {
+        self.session.remove_offline(offline)
+    }
+
+    /// 处理剪贴板文本（防抖后调用）：命中分享则返回展示文本
+    pub fn on_clipboard_text(&mut self, text: &str) -> Option<String> {
+        self.session.ingest_share_text(text)
+    }
 }
 
 /// 在独立线程延迟发送 Ctrl+V（避免主线程键盘钩子上下文干扰注入）
