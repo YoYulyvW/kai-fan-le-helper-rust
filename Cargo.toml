@@ -10,6 +10,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
 winreg = "0.52"
+eframe = { version = "0.27", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.27"
 
 [dependencies.windows-sys]
 version = "0.52"
@@ -29,5 +31,4 @@ features = [
 opt-level = "z"
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true

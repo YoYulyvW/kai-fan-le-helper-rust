@@ -29,7 +29,7 @@ pub const SCAN_BACKOFF_SEQUENCE: [u64; 10] = [5, 5, 5, 5, 5, 5, 10, 15, 30, 60];
 pub const IDLE_SCAN_INTERVAL: u64 = 3;
 pub const KNOWN_IPS_MAX: usize = 10;
 
-pub const WIN_WIDTH: i32 = 380;
+pub const WIN_WIDTH: i32 = 430;
 pub const WIN_HEIGHT: i32 = 44;
 
 pub const DEFAULT_HOTKEY: &str = "F1";

@@ -19,6 +19,8 @@ fn main() {
         config::PORT
     );
 
-    // 进入 UI 主循环（含系统托盘），阻塞直到退出
-    ui::run(app);
+    // 进入 UI 主循环，阻塞直到退出
+    if let Err(e) = ui::run(app) {
+        eprintln!("UI 启动失败: {}", e);
+    }
 }

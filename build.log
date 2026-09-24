@@ -1,0 +1,379 @@
+   Compiling kai-fan-le-helper v0.1.0 (D:\编程\zhushou\kai-fan-le-helper-rust)
+warning: unused import: `imp::*`
+   --> src\ui\tray.rs:163:9
+    |
+163 | pub use imp::*;
+    |         ^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: field `hook` is never read
+  --> src\app.rs:46:5
+   |
+41 | pub struct App {
+   |            --- field in this struct
+...
+46 |     hook: HotkeyHook,
+   |     ^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: methods `next_event`, `reload_hotkeys`, `hotkey_watchdog_tick`, `heartbeat_offline`, `apply_heartbeat`, and `on_clipboard_text` are never used
+   --> src\app.rs:84:12
+    |
+51  | impl App {
+    | -------- methods in this implementation
+...
+84  |     pub fn next_event(&self) -> Option<AppEvent> {
+    |            ^^^^^^^^^^
+...
+92  |     pub fn reload_hotkeys(&self) {
+    |            ^^^^^^^^^^^^^^
+...
+97  |     pub fn hotkey_watchdog_tick(&self) {
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+201 |     pub fn heartbeat_offline(&self) -> Vec<String> {
+    |            ^^^^^^^^^^^^^^^^^
+...
+222 |     pub fn apply_heartbeat(&mut self, offline: &[String]) -> bool {
+    |            ^^^^^^^^^^^^^^^
+...
+227 |     pub fn on_clipboard_text(&mut self, text: &str) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: constant `SCAN_TIMEOUT` is never used
+  --> src\config.rs:20:11
+   |
+20 | pub const SCAN_TIMEOUT: f64 = 0.3;
+   |           ^^^^^^^^^^^^
+
+warning: constant `SCAN_MAX_WORKERS` is never used
+  --> src\config.rs:21:11
+   |
+21 | pub const SCAN_MAX_WORKERS: usize = 128;
+   |           ^^^^^^^^^^^^^^^^
+
+warning: constant `HEARTBEAT_INTERVAL` is never used
+  --> src\config.rs:22:11
+   |
+22 | pub const HEARTBEAT_INTERVAL: u64 = 6;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: constant `HEARTBEAT_TIMEOUT` is never used
+  --> src\config.rs:23:11
+   |
+23 | pub const HEARTBEAT_TIMEOUT: f64 = 1.5;
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: constant `CLIPBOARD_DEBOUNCE` is never used
+  --> src\config.rs:24:11
+   |
+24 | pub const CLIPBOARD_DEBOUNCE: u64 = 400;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: constant `SCAN_BACKOFF_SEQUENCE` is never used
+  --> src\config.rs:28:11
+   |
+28 | pub const SCAN_BACKOFF_SEQUENCE: [u64; 10] = [5, 5, 5, 5, 5, 5, 10, 15, 30, 60];
+   |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `IDLE_SCAN_INTERVAL` is never used
+  --> src\config.rs:29:11
+   |
+29 | pub const IDLE_SCAN_INTERVAL: u64 = 3;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: constant `HOTKEY_WATCHDOG_INTERVAL` is never used
+  --> src\config.rs:36:11
+   |
+36 | pub const HOTKEY_WATCHDOG_INTERVAL: u64 = 15;
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `HOTKEY_WATCHDOG_FORCE_EVERY` is never used
+  --> src\config.rs:37:11
+   |
+37 | pub const HOTKEY_WATCHDOG_FORCE_EVERY: u32 = 12;
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `default_true` is never used
+  --> src\config.rs:72:4
+   |
+72 | fn default_true() -> bool { true }
+   |    ^^^^^^^^^^^^
+
+warning: method `known_ips_limited` is never used
+   --> src\config.rs:155:12
+    |
+129 | impl Settings {
+    | ------------- method in this implementation
+...
+155 |     pub fn known_ips_limited(&self) -> Vec<String> {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `set_discovering`, `set_scan_result`, `remove_offline`, `advance_backoff`, `current_backoff_secs`, and `display_for_history` are never used
+   --> src\core\session.rs:46:12
+    |
+25  | impl Session {
+    | ------------ methods in this implementation
+...
+46  |     pub fn set_discovering(&mut self, v: bool) {
+    |            ^^^^^^^^^^^^^^^
+...
+78  |     pub fn set_scan_result(&mut self, list: Vec<Device>) {
+    |            ^^^^^^^^^^^^^^^
+...
+99  |     pub fn remove_offline(&mut self, ips: &[String]) -> bool {
+    |            ^^^^^^^^^^^^^^
+...
+121 |     pub fn advance_backoff(&mut self) {
+    |            ^^^^^^^^^^^^^^^
+...
+127 |     pub fn current_backoff_secs(&self) -> u64 {
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+151 |     pub fn display_for_history(&self, text: &str) -> String {
+    |            ^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_local_ip` is never used
+  --> src\network\mod.rs:24:8
+   |
+24 | pub fn get_local_ip() -> Option<Ipv4Addr> {
+   |        ^^^^^^^^^^^^
+
+warning: function `scan_network` is never used
+  --> src\network\mod.rs:51:8
+   |
+51 | pub fn scan_network(port: u16, priority_ips: Vec<String>) -> Vec<(String, String)> {
+   |        ^^^^^^^^^^^^
+
+warning: function `scan_list` is never used
+  --> src\network\mod.rs:71:4
+   |
+71 | fn scan_list(ips: &[String], port: u16, timeout: Duration) -> Vec<(String, String)> {
+   |    ^^^^^^^^^
+
+warning: function `ip_sort_key` is never used
+   --> src\network\mod.rs:103:4
+    |
+103 | fn ip_sort_key(ip: &str) -> (u32, u32, u32, u32) {
+    |    ^^^^^^^^^^^
+
+warning: function `ping_phone` is never used
+   --> src\network\mod.rs:114:8
+    |
+114 | pub fn ping_phone(ip: &str, port: u16, timeout: Duration) -> bool {
+    |        ^^^^^^^^^^
+
+warning: function `default_ports` is never used
+   --> src\network\mod.rs:282:8
+    |
+282 | pub fn default_ports() -> (u16, u16, u16) {
+    |        ^^^^^^^^^^^^^
+
+warning: function `detect_system_theme` is never used
+  --> src\platform\mod.rs:12:8
+   |
+12 | pub fn detect_system_theme() -> &'static str {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_text` is never used
+ --> src\platform\clipboard.rs:6:8
+  |
+6 | pub fn get_text() -> String {
+  |        ^^^^^^^^
+
+warning: function `clear` is never used
+  --> src\platform\clipboard.rs:80:8
+   |
+80 | pub fn clear() {
+   |        ^^^^^
+
+warning: function `restore_foreground` is never used
+  --> src\platform\foreground.rs:13:8
+   |
+13 | pub fn restore_foreground(hwnd: isize) {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: method `update_keys` is never used
+  --> src\platform\hotkey.rs:82:12
+   |
+58 | impl HotkeyHook {
+   | --------------- method in this implementation
+...
+82 |     pub fn update_keys(&self, keys: HashMap<u32, HotkeyEvent>) {
+   |            ^^^^^^^^^^^
+
+warning: function `detect` is never used
+  --> src\platform\mod.rs:21:12
+   |
+21 |     pub fn detect() -> &'static str {
+   |            ^^^^^^
+
+warning: variants `Auto`, `Light`, and `Dark` are never constructed
+ --> src\ui\theme.rs:7:5
+  |
+6 | pub enum ThemeMode {
+  |          --------- variants in this enum
+7 |     Auto,
+  |     ^^^^
+8 |     Light,
+  |     ^^^^^
+9 |     Dark,
+  |     ^^^^
+  |
+  = note: `ThemeMode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated items `as_str` and `from_str` are never used
+  --> src\ui\theme.rs:13:12
+   |
+12 | impl ThemeMode {
+   | -------------- associated items in this implementation
+13 |     pub fn as_str(&self) -> &'static str {
+   |            ^^^^^^
+...
+21 |     pub fn from_str(s: &str) -> Self {
+   |            ^^^^^^^^
+
+warning: variants `Light` and `Dark` are never constructed
+  --> src\ui\theme.rs:33:5
+   |
+32 | pub enum ResolvedTheme {
+   |          ------------- variants in this enum
+33 |     Light,
+   |     ^^^^^
+34 |     Dark,
+   |     ^^^^
+   |
+   = note: `ResolvedTheme` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `resolve` is never used
+  --> src\ui\theme.rs:38:12
+   |
+37 | impl ThemeMode {
+   | -------------- method in this implementation
+38 |     pub fn resolve(&self) -> ResolvedTheme {
+   |            ^^^^^^^
+
+warning: function `rgb` is never used
+  --> src\ui\theme.rs:68:4
+   |
+68 | fn rgb(r: u8, g: u8, b: u8) -> u32 {
+   |    ^^^
+
+warning: associated function `for_theme` is never used
+  --> src\ui\theme.rs:73:12
+   |
+72 | impl Palette {
+   | ------------ associated function in this implementation
+73 |     pub fn for_theme(t: ResolvedTheme) -> Self {
+   |            ^^^^^^^^^
+
+warning: constant `WM_TRAYICON` is never used
+  --> src\ui\tray.rs:20:15
+   |
+20 |     pub const WM_TRAYICON: u32 = 0x8001;
+   |               ^^^^^^^^^^^
+
+warning: constant `ID_SHOW` is never used
+  --> src\ui\tray.rs:23:15
+   |
+23 |     pub const ID_SHOW: usize = 1001;
+   |               ^^^^^^^
+
+warning: constant `ID_RESCAN` is never used
+  --> src\ui\tray.rs:24:15
+   |
+24 |     pub const ID_RESCAN: usize = 1002;
+   |               ^^^^^^^^^
+
+warning: constant `ID_AUTO_SCAN` is never used
+  --> src\ui\tray.rs:25:15
+   |
+25 |     pub const ID_AUTO_SCAN: usize = 1003;
+   |               ^^^^^^^^^^^^
+
+warning: constant `ID_AUTO_PUSH` is never used
+  --> src\ui\tray.rs:26:15
+   |
+26 |     pub const ID_AUTO_PUSH: usize = 1004;
+   |               ^^^^^^^^^^^^
+
+warning: constant `ID_CLEAR_CLIP` is never used
+  --> src\ui\tray.rs:27:15
+   |
+27 |     pub const ID_CLEAR_CLIP: usize = 1005;
+   |               ^^^^^^^^^^^^^
+
+warning: constant `ID_AUTOSTART` is never used
+  --> src\ui\tray.rs:28:15
+   |
+28 |     pub const ID_AUTOSTART: usize = 1006;
+   |               ^^^^^^^^^^^^
+
+warning: constant `ID_QUIT` is never used
+  --> src\ui\tray.rs:29:15
+   |
+29 |     pub const ID_QUIT: usize = 1007;
+   |               ^^^^^^^
+
+warning: constant `ID_HOTKEY_BASE` is never used
+  --> src\ui\tray.rs:32:15
+   |
+32 |     pub const ID_HOTKEY_BASE: usize = 1100;
+   |               ^^^^^^^^^^^^^^
+
+warning: constant `ID_THEME_AUTO` is never used
+  --> src\ui\tray.rs:34:15
+   |
+34 |     pub const ID_THEME_AUTO: usize = 1200;
+   |               ^^^^^^^^^^^^^
+
+warning: constant `ID_THEME_LIGHT` is never used
+  --> src\ui\tray.rs:35:15
+   |
+35 |     pub const ID_THEME_LIGHT: usize = 1201;
+   |               ^^^^^^^^^^^^^^
+
+warning: constant `ID_THEME_DARK` is never used
+  --> src\ui\tray.rs:36:15
+   |
+36 |     pub const ID_THEME_DARK: usize = 1202;
+   |               ^^^^^^^^^^^^^
+
+warning: associated items `new`, `add`, and `show_menu` are never used
+  --> src\ui\tray.rs:47:16
+   |
+46 |     impl Tray {
+   |     --------- associated items in this implementation
+47 |         pub fn new(hwnd: HWND) -> Self {
+   |                ^^^
+...
+53 |         fn add(&mut self) {
+   |            ^^^
+...
+73 |         pub fn show_menu(
+   |                ^^^^^^^^^
+
+warning: function `wide` is never used
+   --> src\ui\tray.rs:157:8
+    |
+157 |     fn wide(s: &str) -> Vec<u16> {
+    |        ^^^^
+
+warning: fields `text_sub` and `accent` are never read
+  --> src\ui\window.rs:60:5
+   |
+56 | struct Palette {
+   |        ------- fields in this struct
+...
+60 |     text_sub: Color32,
+   |     ^^^^^^^^
+61 |     input_bg: Color32,
+62 |     accent: Color32,
+   |     ^^^^^^
+   |
+   = note: `Palette` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `kai-fan-le-helper` (bin "kai-fan-le-helper") generated 48 warnings (run `cargo fix --bin "kai-fan-le-helper"` to apply 1 suggestion)
+    Finished release [optimized] target(s) in 33.22s
