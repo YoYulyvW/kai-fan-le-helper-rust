@@ -1,6 +1,4 @@
-//! 用户界面与系统托盘。
-//!
-//! 主窗口使用 egui/eframe 实现现代圆角风格；系统托盘使用原生 Shell_NotifyIcon。
+//! 用户界面与系统托盘（原生 Win32 自绘，低内存）。
 
 pub mod theme;
 pub mod tray;

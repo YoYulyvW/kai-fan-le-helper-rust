@@ -22,6 +22,8 @@ use crate::platform::{clipboard, input};
 pub enum AppEvent {
     Net(NetEvent),
     Hotkey(HotkeyEvent),
+    /// 主动扫描结果：设备列表
+    ScanResult(Vec<(String, String)>),
 }
 
 /// 处理事件后返回给 UI 的动作
@@ -44,6 +46,8 @@ pub struct App {
     broadcast: network::BroadcastListener,
     handshake: network::HandshakeListener,
     hook: HotkeyHook,
+    /// 扫描结果回传通道
+    scan_tx: Sender<AppEvent>,
     /// 助手窗口句柄（用于前台判断）
     pub hwnd: isize,
 }
@@ -57,6 +61,7 @@ impl App {
         let _ = crate::platform::autostart::set_autostart(session.settings.autostart);
 
         let (tx, rx): (Sender<AppEvent>, Receiver<AppEvent>) = channel();
+        let scan_tx2 = tx.clone();
 
         let net_tx = tx.clone();
         let broadcast = network::BroadcastListener::start(
@@ -77,6 +82,7 @@ impl App {
             broadcast,
             handshake,
             hook,
+            scan_tx: scan_tx2,
             hwnd: 0,
         }
     }
@@ -91,6 +97,20 @@ impl App {
 
     pub fn reload_hotkeys(&self) {
         self.hook.update_keys(build_hotkey_keys(&self.session));
+    }
+
+    /// 触发一次主动扫描（在后台线程执行，结果通过事件回传）
+    pub fn start_scan(&mut self) {
+        if self.session.is_discovering() {
+            return;
+        }
+        self.session.set_discovering(true);
+        let priority = self.session.settings.known_ips_limited();
+        let tx = self.scan_tx.clone();
+        std::thread::spawn(move || {
+            let result = network::scan_network(config::PORT, priority);
+            let _ = tx.send(AppEvent::ScanResult(result));
+        });
     }
 
     /// 热键看门狗：定期调用，检测钩子健康（当前实现为刷新按键表）
@@ -109,6 +129,21 @@ impl App {
     /// 处理一个事件，返回 UI 需要执行的动作。
     pub fn handle(&mut self, ev: AppEvent) -> UiAction {
         match ev {
+            AppEvent::ScanResult(list) => {
+                self.session.set_discovering(false);
+                let devices: Vec<crate::core::session::Device> = list
+                    .into_iter()
+                    .map(|(ip, name)| crate::core::session::Device { ip, name })
+                    .collect();
+                let n = devices.len();
+                self.session.set_scan_result(devices);
+                let msg = if n == 0 {
+                    "未找到设备".to_string()
+                } else {
+                    format!("已连接 {}", self.session.current_name().unwrap_or_default())
+                };
+                UiAction::Flash(msg, if n == 0 { "#FF3B30" } else { "#34C759" }.to_string())
+            }
             AppEvent::Net(NetEvent::Handshake { ip, name }) => {
                 let is_new = self.session.upsert_device(&ip, &name);
                 UiAction::Flash(

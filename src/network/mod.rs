@@ -30,6 +30,30 @@ pub fn get_local_ip() -> Option<Ipv4Addr> {
     }
 }
 
+/// 收集本机所有局域网 IPv4 地址（用于多网卡场景）
+pub fn all_local_ips() -> Vec<Ipv4Addr> {
+    let mut ips = Vec::new();
+    // 主路径：连外网探测
+    if let Some(ip) = get_local_ip() {
+        ips.push(ip);
+    }
+    // 补充：常见私有网段的本地地址
+    for candidate in ["192.168.1.1", "192.168.2.1", "10.0.0.1"] {
+        if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+            if sock.connect((candidate, 80)).is_ok() {
+                if let Ok(addr) = sock.local_addr() {
+                    if let IpAddr::V4(v4) = addr.ip() {
+                        if !ips.contains(&v4) {
+                            ips.push(v4);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ips
+}
+
 /// 探测单个 IP：GET /ping，返回 (ip, device_name)
 pub fn check_ip(ip: &str, port: u16, timeout: Duration) -> Option<(String, String)> {
     let addr: SocketAddr = format!("{}:{}", ip, port).parse().ok()?;
@@ -47,24 +71,42 @@ pub fn check_ip(ip: &str, port: u16, timeout: Duration) -> Option<(String, Strin
     Some((ip.to_string(), name))
 }
 
-/// 扫描网段：优先探测已知 IP，命中立即返回；否则扫描 /24。
+/// 扫描网段：优先探测已知 IP，命中立即返回；否则扫描所有本机网段的 /24。
 pub fn scan_network(port: u16, priority_ips: Vec<String>) -> Vec<(String, String)> {
-    let local = match get_local_ip() {
-        Some(ip) => ip,
-        None => return Vec::new(),
-    };
-
+    // 1) 优先探测已知 IP（曾连上过），命中立即返回
     if !priority_ips.is_empty() {
+        crate::utils::log(&format!("scan: priority ips {:?}", priority_ips));
         let hits = scan_list(&priority_ips, port, Duration::from_millis(500));
         if !hits.is_empty() {
+            crate::utils::log(&format!("scan: priority hit {:?}", hits));
             return hits;
         }
     }
 
-    let octets = local.octets();
-    let prefix = format!("{}.{}.{}.", octets[0], octets[1], octets[2]);
-    let ips: Vec<String> = (1..=254).map(|i| format!("{}{}", prefix, i)).collect();
-    scan_list(&ips, port, Duration::from_millis((SCAN_TIMEOUT * 1000.0) as u64))
+    // 2) 收集所有本机网段（多网卡场景），逐一扫描 /24
+    let locals = all_local_ips();
+    crate::utils::log(&format!("scan: local ips {:?}", locals));
+    if locals.is_empty() {
+        return Vec::new();
+    }
+
+    let mut all_hits: Vec<(String, String)> = Vec::new();
+    let timeout = Duration::from_millis((SCAN_TIMEOUT * 1000.0) as u64);
+    for local in locals {
+        let octets = local.octets();
+        // 跳过 169.254.x（链路本地）和 127.x
+        if octets[0] == 169 || octets[0] == 127 {
+            continue;
+        }
+        let prefix = format!("{}.{}.{}.", octets[0], octets[1], octets[2]);
+        let ips: Vec<String> = (1..=254).map(|i| format!("{}{}", prefix, i)).collect();
+        let hits = scan_list(&ips, port, timeout);
+        all_hits.extend(hits);
+    }
+    all_hits.sort_by_key(|(ip, _)| ip_sort_key(ip));
+    all_hits.dedup_by(|a, b| a.0 == b.0);
+    crate::utils::log(&format!("scan: found {:?}", all_hits));
+    all_hits
 }
 
 /// 并发扫描一组 IP，结果按 IP 排序

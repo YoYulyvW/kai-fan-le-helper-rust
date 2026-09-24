@@ -43,6 +43,10 @@ impl Session {
         self.current().map(|d| d.ip.as_str())
     }
 
+    pub fn current_name(&self) -> Option<&str> {
+        self.current().map(|d| d.name.as_str())
+    }
+
     pub fn set_discovering(&mut self, v: bool) {
         self.discovering = v;
     }

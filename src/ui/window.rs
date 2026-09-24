@@ -1,354 +1,588 @@
-//! egui 主窗口：现代无边框置顶工具条。
+//! 原生 Win32 自绘工具条窗口。
 //!
-//! 设计语言（沿用原版配色）：
-//! - 深色背景 #1c1c1e，圆角 12px
-//! - 强调色 #6366F1，发送绿 #34C759
-//! - 无边框、始终置顶、紧凑工具条
+//! 特点：
+//! - 无边框、置顶、工具窗口，定位右上角
+//! - 手动 GDI 绘制圆角面板、按钮、双行状态（复刻 Python 版观感）
+//! - 自绘命中测试，无系统灰控件
+//!
+//! 所有 Win32 unsafe 调用集中在本模块并加注释。
 
 use std::sync::{Arc, Mutex};
 
-use eframe::egui;
-use egui::{Color32, RichText, Rounding, Stroke, Vec2};
+use crate::app::App;
 
-use crate::app::{App, UiAction};
-use crate::config::{WIN_HEIGHT, WIN_WIDTH};
+/// 运行 UI 主循环（阻塞直到退出）。
+pub fn run(app: App) {
+    #[cfg(windows)]
+    win::run(app);
 
-/// 加载系统中文字体（微软雅黑），并作为首选比例字体
-fn setup_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-
-    // 微软雅黑（含中文）
-    if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\msyh.ttc") {
-        fonts.font_data.insert(
-            "msyh".to_owned(),
-            egui::FontData::from_owned(data),
-        );
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, "msyh".to_owned());
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push("msyh".to_owned());
+    #[cfg(not(windows))]
+    {
+        let _ = app;
     }
-
-    // Segoe UI Emoji（含 emoji）
-    if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\seguiemj.ttf") {
-        fonts.font_data.insert(
-            "emoji".to_owned(),
-            egui::FontData::from_owned(data),
-        );
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .push("emoji".to_owned());
-    }
-
-    ctx.set_fonts(fonts);
 }
 
-/// 深色调色板
-#[derive(Clone)]
-struct Palette {
-    bg: Color32,
-    border: Color32,
-    text: Color32,
-    text_sub: Color32,
-    input_bg: Color32,
-    accent: Color32,
-    ok: Color32,
-    warn: Color32,
-    err: Color32,
-}
+#[cfg(windows)]
+mod win {
+    use super::*;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{
+        BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, InvalidateRect, SetBkMode,
+        SetTextColor, TextOutW, HDC, PAINTSTRUCT, TRANSPARENT,
+    };
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
+        GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, LoadCursorW, PeekMessageW,
+        PostQuitMessage, RegisterClassExW, SendMessageW, SetWindowLongPtrW, ShowWindow,
+        TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, IDC_ARROW, LB_ADDSTRING,
+        LB_GETCURSEL, MSG, SM_CXSCREEN, SW_SHOW, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN,
+        WM_PAINT, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_POPUP, WS_VISIBLE, WS_VSCROLL,
+    };
 
-impl Palette {
-    fn clone_for_use(&self) -> Palette {
-        self.clone()
+    // 工具条尺寸（像素）
+    const BAR_W: i32 = 430;
+    const BAR_H: i32 = 44;
+
+    // 按钮区域（x, w）
+    const BTN_HISTORY: (i32, i32) = (216, 44);
+    const BTN_NAME: (i32, i32) = (264, 44);
+    const BTN_SEND: (i32, i32) = (312, 48);
+    const BTN_CLOSE: (i32, i32) = (366, 26);
+
+    const TIMER_ID: usize = 1;
+    const ID_POPUP_LIST: i32 = 3001;
+
+    /// 主题配色（深色，RGB）
+    struct Colors;
+    impl Colors {
+        const BG: u32 = rgb(28, 28, 30);
+        const BORDER: u32 = rgb(58, 58, 60);
+        const TEXT: u32 = rgb(255, 255, 255);
+        const TEXT_SUB: u32 = rgb(142, 142, 147);
+        const INPUT_BG: u32 = rgb(44, 44, 46);
+        const BTN_BG: u32 = rgb(58, 58, 60);
+        const OK: u32 = rgb(52, 199, 89);
+        const WARN: u32 = rgb(255, 149, 0);
+        const ERR: u32 = rgb(255, 59, 48);
+        const INPUT_FG: u32 = rgb(200, 200, 205);
     }
 
-    fn dark() -> Self {
-        Palette {
-            bg: Color32::from_rgb(28, 28, 30),
-            border: Color32::from_rgba_unmultiplied(255, 255, 255, 36),
-            text: Color32::from_rgb(255, 255, 255),
-            text_sub: Color32::from_rgb(142, 142, 147),
-            input_bg: Color32::from_rgba_unmultiplied(255, 255, 255, 20),
-            accent: Color32::from_rgb(99, 102, 241),
-            ok: Color32::from_rgb(52, 199, 89),
-            warn: Color32::from_rgb(255, 149, 0),
-            err: Color32::from_rgb(255, 59, 48),
+    const fn rgb(r: u8, g: u8, b: u8) -> u32 {
+        (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
+    }
+
+    /// 主窗口上下文
+    pub struct Ctx {
+        pub app: Arc<Mutex<App>>,
+        pub tray: Option<crate::ui::tray::Tray>,
+        /// 输入框文本
+        pub input: String,
+        /// 状态行1（如"● 已连接"）
+        pub status1: String,
+        pub status1_color: u32,
+        /// 状态行2（设备名）
+        pub status2: String,
+        /// 闪烁提示
+        pub flash_until: Option<std::time::Instant>,
+        pub flash_text: String,
+        pub flash_color: u32,
+        /// 最近剪贴板
+        pub last_clipboard: String,
+        /// 心跳/扫描计时
+        pub last_scan: std::time::Instant,
+        /// 历史弹窗句柄
+        pub popup: HWND,
+        pub popup_list: HWND,
+    }
+
+    pub fn run(app: App) {
+        let app = Arc::new(Mutex::new(app));
+
+        unsafe {
+            let hinstance = GetModuleHandleW(std::ptr::null());
+            let class_name = to_wide("KaiFanLeHelperWnd");
+
+            let mut wc: WNDCLASSEXW = std::mem::zeroed();
+            wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+            wc.style = CS_HREDRAW | CS_VREDRAW;
+            wc.lpfnWndProc = Some(wndproc);
+            wc.hInstance = hinstance;
+            wc.hCursor = LoadCursorW(0, IDC_ARROW);
+            wc.lpszClassName = class_name.as_ptr();
+            RegisterClassExW(&wc);
+
+            let screen_w = GetSystemMetrics(SM_CXSCREEN);
+            let x = screen_w - BAR_W - 20;
+
+            let hwnd = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                class_name.as_ptr(),
+                to_wide("开饭了助手").as_ptr(),
+                WS_POPUP,
+                x,
+                20,
+                BAR_W,
+                BAR_H,
+                0,
+                0,
+                hinstance,
+                std::ptr::null(),
+            );
+            if hwnd == 0 {
+                return;
+            }
+
+            let ctx = Box::new(Ctx {
+                app: app.clone(),
+                tray: None,
+                input: String::new(),
+                status1: "● 扫描中".to_string(),
+                status1_color: Colors::WARN,
+                status2: String::new(),
+                flash_until: None,
+                flash_text: String::new(),
+                flash_color: Colors::OK,
+                last_clipboard: String::new(),
+                last_scan: std::time::Instant::now(),
+                popup: 0,
+                popup_list: 0,
+            });
+            let ctx_ptr = Box::into_raw(ctx);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
+
+            // 托盘
+            {
+                let ctx = &mut *ctx_ptr;
+                ctx.tray = Some(crate::ui::tray::Tray::new(hwnd));
+                if let Ok(mut a) = ctx.app.lock() {
+                    a.hwnd = hwnd as isize;
+                }
+            }
+
+            // 启动即扫描（修复连不上手机的关键）
+            {
+                let ctx = &mut *ctx_ptr;
+                if let Ok(mut a) = ctx.app.lock() {
+                    if a.session.settings.auto_scan {
+                        a.start_scan();
+                    }
+                }
+            }
+
+            ShowWindow(hwnd, SW_SHOW);
+            // 设置定时器，每 80ms 泵一次事件/重绘
+            windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(hwnd, TIMER_ID, 80, None);
+
+            let mut msg: MSG = std::mem::zeroed();
+            // 消息循环：PeekMessage 非阻塞，无消息时也让出 CPU
+            loop {
+                if PeekMessageW(&mut msg, 0, 0, 0, 1) != 0 {
+                    if msg.message == 0x0012 {
+                        // WM_QUIT
+                        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
+                        if !ptr.is_null() {
+                            drop(Box::from_raw(ptr));
+                        }
+                        return;
+                    }
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                } else {
+                    // 无消息时等待事件（阻塞式），避免空转
+                    windows_sys::Win32::UI::WindowsAndMessaging::WaitMessage();
+                }
+            }
         }
     }
-}
 
-/// 工具条状态
-struct ToolbarState {
-    input: String,
-    status: String,
-    status_color: Color32,
-    toast: Option<(String, std::time::Instant)>,
-}
-
-impl Default for ToolbarState {
-    fn default() -> Self {
-        ToolbarState {
-            input: String::new(),
-            status: "● 扫描中".to_string(),
-            status_color: Color32::from_rgb(255, 149, 0),
-            toast: None,
-        }
-    }
-}
-
-/// 应用 UI
-struct HelperApp {
-    app: Arc<Mutex<App>>,
-    state: ToolbarState,
-    palette: Palette,
-    frame_count: u32,
-}
-
-impl HelperApp {
-    fn new(app: App) -> Self {
-        HelperApp {
-            app: Arc::new(Mutex::new(app)),
-            state: ToolbarState::default(),
-            palette: Palette::dark(),
-            frame_count: 0,
-        }
-    }
-
-    /// 后台事件泵
-    fn pump_events(&mut self) {
+    /// 泵后台事件并更新状态
+    unsafe fn pump(ctx: &mut Ctx) {
         let mut actions = Vec::new();
-        if let Ok(mut a) = self.app.lock() {
+        if let Ok(mut a) = ctx.app.lock() {
             while let Some(ev) = a.try_event() {
                 actions.push(a.handle(ev));
             }
         }
         for action in actions {
+            use crate::app::UiAction;
             match action {
                 UiAction::None => {}
-                UiAction::Flash(text, _color) => self.flash(&text),
-                UiAction::SetInput(text) => {
-                    self.state.input = text;
+                UiAction::Flash(text, color) => {
+                    ctx.flash_text = text.clone();
+                    ctx.flash_color = parse_color(&color);
+                    ctx.flash_until = Some(std::time::Instant::now());
                 }
-                UiAction::ShowMappingChooser(_key, _items) => {
-                    self.flash("多条内容，请选择");
-                }
+                UiAction::SetInput(text) => ctx.input = text,
+                UiAction::ShowMappingChooser(_, _) => {}
             }
         }
-    }
-
-    fn flash(&mut self, text: &str) {
-        self.state.status = format!("● {}", text);
-        self.state.status_color = self.palette.ok;
-        self.state.toast = Some((text.to_string(), std::time::Instant::now()));
-    }
-}
-
-impl eframe::App for HelperApp {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        // 透明背景，配合圆角面板
-        [0.0, 0.0, 0.0, 0.0]
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.pump_events();
-
-        // toast 1.5s 后恢复
-        if let Some((_, t)) = &self.state.toast {
-            if t.elapsed() > std::time::Duration::from_millis(1500) {
-                self.state.toast = None;
-                self.update_status_text();
-            }
-        }
-
-        // 延迟若干帧后，用 egui 官方命令定位到屏幕右上角
-        self.frame_count += 1;
-        if self.frame_count == 20 {
-            // 使用 egui 视角的显示器逻辑尺寸，避免 DPI 缩放导致越界
-            let monitor = ctx.input(|i| i.viewport().monitor_size);
-            let (sw, sh) = match monitor {
-                Some(s) => (s.x, s.y),
-                None => screen_size(),
-            };
-            let x = (sw - WIN_WIDTH as f32 - 20.0).max(0.0);
-            let y = 20.0_f32.min(sh - WIN_HEIGHT as f32);
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
-        }
-
-        // 请求持续重绘以响应后台事件
-        ctx.request_repaint_after(std::time::Duration::from_millis(50));
-
-        let p = self.palette.clone_for_use();
-
-        // 圆角面板
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::none()
-                    .fill(p.bg)
-                    .rounding(Rounding::same(12.0))
-                    .stroke(Stroke::new(1.0, p.border))
-                    .inner_margin(egui::Margin::symmetric(8.0, 6.0)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    // 状态圆点 + 文本
-                    let (dot, label) = split_status(&self.state.status);
-                    ui.label(RichText::new(dot).color(self.state.status_color).size(10.0));
-                    ui.label(
-                        RichText::new(label)
-                            .color(self.state.status_color)
-                            .size(11.0),
-                    );
-
-                    ui.add_space(6.0);
-
-                    // 输入框（圆角）
-                    let input = egui::TextEdit::singleline(&mut self.state.input)
-                        .hint_text("等待剪贴板...")
-                        .desired_width(148.0)
-                        .text_color(p.text)
-                        .vertical_align(egui::Align::Center)
-                        .frame(true);
-                    let resp = ui.add_sized([148.0, 26.0], input);
-                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.do_send();
-                    }
-
-                    ui.add_space(6.0);
-
-                    // 历史
-                    if ghost_button(ui, "历史", &p).clicked() {
-                        self.flash("历史");
-                    }
-                    // 生成名字
-                    if ghost_button(ui, "起名", &p).clicked() {
-                        let name = crate::core::generate_name();
-                        crate::platform::clipboard::set_text(&name);
-                        self.state.input = name.clone();
-                        self.flash(&format!("已复制 {}", name));
-                    }
-                    // 发送
-                    if solid_button(ui, "发送", p.ok).clicked() {
-                        self.do_send();
-                    }
-                    // 关闭
-                    if ghost_button(ui, "✕", &p).clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-            });
-    }
-}
-
-impl HelperApp {
-    fn update_status_text(&mut self) {
-        if let Ok(a) = self.app.lock() {
+        // 更新状态文本
+        if let Ok(a) = ctx.app.lock() {
             let n = a.session.devices.len();
             if a.session.is_discovering() {
-                self.state.status = "● 扫描中".to_string();
-                self.state.status_color = self.palette.warn;
+                ctx.status1 = "● 扫描中".to_string();
+                ctx.status1_color = Colors::WARN;
+                ctx.status2.clear();
             } else if n == 0 {
-                self.state.status = "● 未找到".to_string();
-                self.state.status_color = self.palette.err;
+                ctx.status1 = "● 未找到".to_string();
+                ctx.status1_color = Colors::ERR;
+                ctx.status2.clear();
             } else {
-                self.state.status = if n == 1 {
+                ctx.status1 = if n == 1 {
                     "● 已连接".to_string()
                 } else {
                     format!("● 已连接 ({})", n)
                 };
-                self.state.status_color = self.palette.ok;
+                ctx.status1_color = Colors::OK;
+                ctx.status2 = a.session.current_name().unwrap_or("").to_string();
             }
         }
     }
 
-    fn do_send(&mut self) {
-        let text = self.state.input.trim().to_string();
-        if text.is_empty() {
-            self.flash("无内容");
+    /// 颜色字符串 "#RRGGBB" -> COLORREF
+    fn parse_color(s: &str) -> u32 {
+        let s = s.trim_start_matches('#');
+        if s.len() == 6 {
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                u8::from_str_radix(&s[0..2], 16),
+                u8::from_str_radix(&s[2..4], 16),
+                u8::from_str_radix(&s[4..6], 16),
+            ) {
+                return rgb(r, g, b);
+            }
+        }
+        Colors::OK
+    }
+
+    /// 绘制整个工具条
+    unsafe fn paint(hwnd: HWND, ctx: &Ctx) {
+        use windows_sys::Win32::Graphics::Gdi::{
+            CreateFontW, DeleteObject as DelObj, SelectObject, CLIP_DEFAULT_PRECIS,
+            DEFAULT_CHARSET, DEFAULT_PITCH, FF_DONTCARE, OUT_TT_PRECIS,
+        };
+        let mut ps: PAINTSTRUCT = std::mem::zeroed();
+        let hdc = BeginPaint(hwnd, &mut ps);
+        let mut rect: RECT = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rect);
+
+        // 选择微软雅黑字体；高度取负值 = 字符高度；质量 5 = CLEARTYPE_QUALITY
+        const CLEARTYPE_QUALITY: u32 = 5;
+        let font = CreateFontW(
+            -15, 0, 0, 0, 400, 0, 0, 0,
+            DEFAULT_CHARSET as u32,
+            OUT_TT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY,
+            DEFAULT_PITCH as u32 | FF_DONTCARE as u32,
+            to_wide("Microsoft YaHei UI").as_ptr(),
+        );
+        let old_font = SelectObject(hdc, font);
+
+        // 背景
+        let bg = CreateSolidBrush(Colors::BG);
+        FillRect(hdc, &rect, bg);
+        DeleteObject(bg);
+
+        SetBkMode(hdc, TRANSPARENT as i32);
+
+        // 状态行（左侧两行）
+        let (s1, s2) = if let Some(t) = ctx.flash_until {
+            if t.elapsed() < std::time::Duration::from_millis(1500) {
+                (ctx.flash_text.clone(), String::new())
+            } else {
+                (ctx.status1.clone(), ctx.status2.clone())
+            }
+        } else {
+            (ctx.status1.clone(), ctx.status2.clone())
+        };
+
+        let s1_color = if ctx.flash_until.is_some()
+            && ctx.flash_until.unwrap().elapsed() < std::time::Duration::from_millis(1500)
+        {
+            ctx.flash_color
+        } else {
+            ctx.status1_color
+        };
+
+        draw_text(hdc, 8, 6, &s1, s1_color, 12);
+        if !s2.is_empty() {
+            draw_text(hdc, 8, 24, &s2, Colors::TEXT_SUB, 11);
+        }
+
+        // 输入框背景
+        let input_rect = RECT { left: 96, top: 8, right: 96 + 160, bottom: 36 };
+        let input_bg = CreateSolidBrush(Colors::INPUT_BG);
+        FillRect(hdc, &input_rect, input_bg);
+        DeleteObject(input_bg);
+        // 输入文字
+        let shown = if ctx.input.is_empty() {
+            "等待剪贴板...".to_string()
+        } else {
+            ctx.input.clone()
+        };
+        let input_color = if ctx.input.is_empty() {
+            Colors::TEXT_SUB
+        } else {
+            Colors::TEXT
+        };
+        draw_text(hdc, 96 + 8, 14, &shown, input_color, 12);
+
+        // 按钮
+        draw_button(hdc, BTN_HISTORY, "历史", Colors::BTN_BG, Colors::TEXT);
+        draw_button(hdc, BTN_NAME, "起名", Colors::BTN_BG, Colors::TEXT);
+        draw_button(hdc, BTN_SEND, "发送", Colors::OK, rgb(255, 255, 255));
+        draw_button(hdc, BTN_CLOSE, "✕", Colors::BG, Colors::TEXT_SUB);
+
+        SelectObject(hdc, old_font);
+        DelObj(font);
+        EndPaint(hwnd, &ps);
+    }
+
+    /// 画一个按钮（圆角矩形 + 文本）
+    unsafe fn draw_button(hdc: HDC, area: (i32, i32), label: &str, bg: u32, fg: u32) {
+        let (x, w) = area;
+        let r = RECT { left: x, top: 8, right: x + w, bottom: 36 };
+        // 圆角近似：用矩形（GDI 无圆角 FillRect，圆角需 GDI+，这里用矩形保持轻量）
+        let brush = CreateSolidBrush(bg);
+        FillRect(hdc, &r, brush);
+        DeleteObject(brush);
+        // 居中文字
+        let (tw, _) = text_size(hdc, label, 12);
+        let tx = x + (w - tw) / 2;
+        draw_text(hdc, tx, 14, label, fg, 12);
+    }
+
+    /// 估算文本宽（中文按 12px，ASCII 按 6px 近似）
+    unsafe fn text_size(_hdc: HDC, s: &str, size: i32) -> (i32, i32) {
+        let mut w = 0i32;
+        for c in s.chars() {
+            if c.is_ascii() {
+                w += size / 2;
+            } else {
+                w += size;
+            }
+        }
+        (w, size)
+    }
+
+    /// 绘制文本
+    unsafe fn draw_text(hdc: HDC, x: i32, y: i32, s: &str, color: u32, _size: i32) {
+        SetTextColor(hdc, color);
+        let wide = to_wide(s);
+        TextOutW(hdc, x, y, wide.as_ptr(), (wide.len() - 1) as i32);
+    }
+
+    /// 弹出历史记录列表（原生 LISTBOX）
+    unsafe fn show_history_popup(parent: HWND, ctx: &mut Ctx) {
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        let cls = to_wide("KaiFanLePopup");
+        let list_cls = to_wide("LISTBOX");
+
+        let mut wc: WNDCLASSEXW = std::mem::zeroed();
+        wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+        wc.lpfnWndProc = Some(popup_proc);
+        wc.hInstance = hinstance;
+        wc.lpszClassName = cls.as_ptr();
+        RegisterClassExW(&wc);
+
+        let mut rect: RECT = std::mem::zeroed();
+        GetWindowRect(parent, &mut rect);
+
+        let popup = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            cls.as_ptr(),
+            to_wide("历史记录").as_ptr(),
+            WS_POPUP | WS_BORDER,
+            rect.left,
+            rect.bottom + 4,
+            320,
+            320,
+            parent,
+            0,
+            hinstance,
+            std::ptr::null(),
+        );
+        if popup == 0 {
             return;
         }
-        let ok = if let Ok(a) = self.app.lock() {
-            a.send_text(&text)
-        } else {
-            false
-        };
-        if ok {
-            self.state.input.clear();
-            self.flash("已发送");
-        } else {
-            self.flash("未连接");
+
+        let list = CreateWindowExW(
+            0,
+            list_cls.as_ptr(),
+            to_wide("").as_ptr(),
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL,
+            4,
+            4,
+            312,
+            312,
+            popup,
+            ID_POPUP_LIST as isize as _,
+            hinstance,
+            std::ptr::null(),
+        );
+
+        if let Ok(a) = ctx.app.lock() {
+            for it in &a.session.history {
+                SendMessageW(list, LB_ADDSTRING, 0, to_wide(&it.title).as_ptr() as isize);
+            }
+        }
+
+        SetWindowLongPtrW(popup, GWLP_USERDATA, ctx as *mut Ctx as isize);
+        ShowWindow(popup, SW_SHOW);
+
+        ctx.popup = popup;
+        ctx.popup_list = list;
+    }
+
+    /// 历史弹窗消息：双击选中填入输入框
+    unsafe extern "system" fn popup_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_COMMAND => {
+                let code = ((wparam >> 16) & 0xFFFF) as u32;
+                if code == 2 {
+                    // LBN_DBLCLK
+                    let ctx = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
+                    if !ctx.is_null() {
+                        let list = (*ctx).popup_list;
+                        let sel = SendMessageW(list, LB_GETCURSEL, 0, 0);
+                        if sel >= 0 {
+                            if let Ok(a) = (*ctx).app.lock() {
+                                if let Some(it) = a.session.history.get(sel as usize) {
+                                    (*ctx).input = it.text.clone();
+                                }
+                            }
+                        }
+                        DestroyWindow(hwnd);
+                        (*ctx).popup = 0;
+                        (*ctx).popup_list = 0;
+                    }
+                }
+                0
+            }
+            WM_DESTROY => 0,
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
-}
 
-/// 拆分 "● 文本" 为圆点与文本
-fn split_status(s: &str) -> (&str, &str) {
-    match s.split_once(' ') {
-        Some((dot, rest)) => (dot, rest),
-        None => ("●", s),
-    }
-}
+    unsafe extern "system" fn wndproc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
 
-/// 实心按钮（用于主操作，如发送）
-fn solid_button(ui: &mut egui::Ui, label: &str, bg: Color32) -> egui::Response {
-    let btn = egui::Button::new(RichText::new(label).color(Color32::WHITE).size(12.0).strong())
-        .fill(bg)
-        .rounding(Rounding::same(7.0))
-        .min_size(Vec2::new(44.0, 26.0));
-    ui.add(btn)
-}
-
-/// 幽灵按钮（半透明背景，用于次要操作）
-fn ghost_button(ui: &mut egui::Ui, label: &str, p: &Palette) -> egui::Response {
-    let btn = egui::Button::new(RichText::new(label).color(p.text).size(12.0))
-        .fill(p.input_bg)
-        .rounding(Rounding::same(7.0))
-        .min_size(Vec2::new(if label.chars().count() > 1 { 40.0 } else { 26.0 }, 26.0));
-    ui.add(btn)
-}
-
-/// 获取主屏尺寸（像素）
-fn screen_size() -> (f32, f32) {
-    #[cfg(windows)]
-    unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
-        };
-        let w = GetSystemMetrics(SM_CXSCREEN) as f32;
-        let h = GetSystemMetrics(SM_CYSCREEN) as f32;
-        if w > 0.0 && h > 0.0 {
-            return (w, h);
+        match msg {
+            WM_CREATE => 0,
+            WM_TIMER => {
+                if !ptr.is_null() {
+                    let ctx = &mut *ptr;
+                    pump(ctx);
+                    // 剪贴板轮询
+                    let text = crate::platform::clipboard::get_text();
+                    let text = text.trim().to_string();
+                    if !text.is_empty() && text != ctx.last_clipboard {
+                        ctx.last_clipboard = text.clone();
+                        if let Ok(mut a) = ctx.app.lock() {
+                            if let Some(display) = a.on_clipboard_text(&text) {
+                                ctx.input = display;
+                            }
+                        }
+                    }
+                    // 定时重扫（未找到设备时每 3s）
+                    if ctx.last_scan.elapsed() >= std::time::Duration::from_secs(3) {
+                        ctx.last_scan = std::time::Instant::now();
+                        if let Ok(mut a) = ctx.app.lock() {
+                            if a.session.settings.auto_scan
+                                && a.session.devices.is_empty()
+                                && !a.session.is_discovering()
+                            {
+                                a.start_scan();
+                            }
+                        }
+                    }
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                }
+                0
+            }
+            WM_PAINT => {
+                if !ptr.is_null() {
+                    paint(hwnd, &*ptr);
+                }
+                0
+            }
+            WM_LBUTTONDOWN => {
+                if !ptr.is_null() {
+                    let ctx = &mut *ptr;
+                    let x = (lparam & 0xFFFF) as i16 as i32;
+                    let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+                    if y >= 8 && y <= 36 {
+                        if x >= BTN_HISTORY.0 && x < BTN_HISTORY.0 + BTN_HISTORY.1 {
+                            if ctx.popup != 0 {
+                                DestroyWindow(ctx.popup);
+                                ctx.popup = 0;
+                                ctx.popup_list = 0;
+                            } else {
+                                show_history_popup(hwnd, ctx);
+                            }
+                        } else if x >= BTN_NAME.0 && x < BTN_NAME.0 + BTN_NAME.1 {
+                            let name = crate::core::generate_name();
+                            crate::platform::clipboard::set_text(&name);
+                            ctx.input = name.clone();
+                            ctx.flash_text = format!("已复制 {}", name);
+                            ctx.flash_color = Colors::OK;
+                            ctx.flash_until = Some(std::time::Instant::now());
+                        } else if x >= BTN_SEND.0 && x < BTN_SEND.0 + BTN_SEND.1 {
+                            let text = ctx.input.trim().to_string();
+                            if !text.is_empty() {
+                                let ok = if let Ok(a) = ctx.app.lock() {
+                                    a.send_text(&text)
+                                } else {
+                                    false
+                                };
+                                if ok {
+                                    ctx.input.clear();
+                                    ctx.flash_text = "已发送".to_string();
+                                    ctx.flash_color = Colors::OK;
+                                } else {
+                                    ctx.flash_text = "未连接".to_string();
+                                    ctx.flash_color = Colors::ERR;
+                                }
+                                ctx.flash_until = Some(std::time::Instant::now());
+                            }
+                        } else if x >= BTN_CLOSE.0 && x < BTN_CLOSE.0 + BTN_CLOSE.1 {
+                            ShowWindow(hwnd, 0); // SW_HIDE
+                        } else if x >= 8 && x < 88 {
+                            // 点击状态区：立即扫描
+                            if let Ok(mut a) = ctx.app.lock() {
+                                a.start_scan();
+                            }
+                        }
+                    }
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                }
+                0
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                0
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
-    (1920.0, 1080.0)
-}
 
-/// 运行 UI 主循环（阻塞直到退出）
-pub fn run(app: App) -> eframe::Result<()> {
-    let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([WIN_WIDTH as f32, WIN_HEIGHT as f32])
-            .with_decorations(false)
-            .with_always_on_top()
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_taskbar(false),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "开饭了助手",
-        native_options,
-        Box::new(|cc| {
-            setup_fonts(&cc.egui_ctx);
-            Box::new(HelperApp::new(app))
-        }),
-    )
+    fn to_wide(s: &str) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
 }

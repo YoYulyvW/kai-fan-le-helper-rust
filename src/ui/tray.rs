@@ -62,7 +62,9 @@ mod imp {
                 let tip: Vec<u16> = "开饭了助手\0".encode_utf16().collect();
                 let n = tip.len().min(nid.szTip.len());
                 nid.szTip[..n].copy_from_slice(&tip[..n]);
-                if Shell_NotifyIconW(NIM_ADD, &nid) != 0 {
+                let ok = Shell_NotifyIconW(NIM_ADD, &nid);
+                crate::utils::log(&format!("tray: NIM_ADD result={} hwnd={}", ok, self.hwnd));
+                if ok != 0 {
                     self.added = true;
                 }
             }
