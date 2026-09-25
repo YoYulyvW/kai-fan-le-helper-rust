@@ -36,7 +36,8 @@ mod win {
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
         GetParent, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
         LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-        SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW,
+        SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS,
+        CS_HREDRAW, CS_VREDRAW,
         CW_USEDEFAULT,
         GWLP_USERDATA, IDC_ARROW, LB_ADDSTRING, LB_GETCURSEL, LBS_NOTIFY, MSG, SM_CXSCREEN, SW_HIDE,
         SW_SHOW, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT,
@@ -186,8 +187,10 @@ mod win {
         pub popup: HWND,
         pub popup_list: HWND,
         pub hover: Option<Btn>,
-        /// 历史面板是否展开
+        /// 面板是否展开
         pub panel_open: bool,
+        /// 面板模式：0=无 1=历史 2=设置
+        pub panel_mode: u8,
         /// 面板列表项：(标题, 完整文本, 时间)
         pub popup_items: Vec<(String, String, String)>,
         /// 面板悬停项索引
@@ -272,6 +275,7 @@ mod win {
                 popup_list: 0,
                 hover: None,
                 panel_open: false,
+                panel_mode: 0,
                 popup_items: Vec::new(),
                 popup_hover: -1,
                 popup_scroll: 0,
@@ -500,9 +504,13 @@ mod win {
             draw_btn_gp(&g, &f, th, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
             draw_btn_gp(&g, &f, th, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
 
-            // 展开的历史面板
+            // 展开的面板
             if ctx.panel_open {
-                draw_history_panel(&g, &f, th, ctx);
+                if ctx.panel_mode == 1 {
+                    draw_history_panel(&g, &f, th, ctx);
+                } else if ctx.panel_mode == 2 {
+                    draw_settings_panel(&g, &f, th, ctx);
+                }
             }
         }
 
@@ -573,6 +581,115 @@ mod win {
                     &item.2, argb(time_color), f(10), false, false,
                 );
             }
+        }
+    }
+
+    // 设置面板行数（含 4 个开关 + 重扫 + 退出）
+    const SETTINGS_ROWS: usize = 6;
+
+    /// 绘制设置面板（开关列表）
+    unsafe fn draw_settings_panel<F: Fn(i32) -> f32>(
+        g: &crate::ui::gdiplus::Graphics,
+        f: &F,
+        th: &Theme,
+        ctx: &Ctx,
+    ) {
+        let panel_top = BAR_H;
+        let pw = BAR_W;
+
+        // 读取当前设置
+        let (auto_scan, auto_push, clear_clip, autostart) = if let Ok(a) = ctx.app.lock() {
+            (
+                a.session.settings.auto_scan,
+                a.session.settings.auto_push,
+                a.session.settings.clear_clipboard,
+                a.session.settings.autostart,
+            )
+        } else {
+            (true, false, true, true)
+        };
+
+        // 分隔线
+        g.fill_round(f(12), f(panel_top), f(pw - 24), f(1), 0.0, argb(th.border));
+        g.text(
+            f(16), f(panel_top + 6), f(pw - 32), f(PANEL_HEADER - 6),
+            "⚙ 设置", argb(th.text), f(13), true, false,
+        );
+
+        let list_top = panel_top + PANEL_HEADER;
+        let rows: [(&str, bool); SETTINGS_ROWS] = [
+            ("自动扫描", auto_scan),
+            ("识别后自动推送", auto_push),
+            ("粘贴后清空剪贴板", clear_clip),
+            ("开机自启动", autostart),
+            ("重新扫描", false),
+            ("退出", false),
+        ];
+
+        for (i, (label, on)) in rows.iter().enumerate() {
+            let row_y = list_top + 4 + (i as i32) * PANEL_ROW_H;
+            let hovered = ctx.popup_hover == i as i32;
+
+            if hovered {
+                g.fill_round(
+                    f(8), f(row_y), f(pw - 16), f(PANEL_ROW_H - 4),
+                    f(8), argb(rgb(99, 102, 241)),
+                );
+            }
+
+            let label_color = if hovered { th.white } else { th.text };
+            g.text(
+                f(18), f(row_y + 8), f(pw - 80), f(24),
+                label, argb(label_color), f(13), false, false,
+            );
+
+            // 开关状态（仅前 4 项）
+            if i < 4 {
+                let (state_txt, state_color) = if *on {
+                    ("开", if hovered { th.white } else { th.ok })
+                } else {
+                    ("关", if hovered { th.white } else { th.text_sub })
+                };
+                g.text(
+                    f(pw - 60), f(row_y + 8), f(44), f(24),
+                    state_txt, argb(state_color), f(13), true, false,
+                );
+            }
+        }
+    }
+
+    /// 处理设置面板点击
+    unsafe fn handle_settings_click(hwnd: HWND, ctx: &mut Ctx, idx: i32) {
+        match idx {
+            0 => toggle_bool(ctx, |s| s.auto_scan = !s.auto_scan),
+            1 => toggle_bool(ctx, |s| s.auto_push = !s.auto_push),
+            2 => toggle_bool(ctx, |s| s.clear_clipboard = !s.clear_clipboard),
+            3 => {
+                if let Ok(mut a) = ctx.app.lock() {
+                    a.session.settings.autostart = !a.session.settings.autostart;
+                    a.session.settings.save();
+                    let v = a.session.settings.autostart;
+                    let _ = crate::platform::autostart::set_autostart(v);
+                }
+            }
+            4 => {
+                if let Ok(mut a) = ctx.app.lock() {
+                    a.start_scan();
+                }
+            }
+            5 => {
+                PostQuitMessage(0);
+            }
+            _ => {}
+        }
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+    }
+
+    /// 切换设置项并持久化
+    unsafe fn toggle_bool<F: FnOnce(&mut crate::config::Settings)>(ctx: &Ctx, f: F) {
+        if let Ok(mut a) = ctx.app.lock() {
+            f(&mut a.session.settings);
+            a.session.settings.save();
         }
     }
 
@@ -814,33 +931,37 @@ mod win {
     const PANEL_ROW_H: i32 = 46;
     const PANEL_HEADER: i32 = 30;
 
-    /// 切换历史面板的展开/收起
-    unsafe fn toggle_panel(hwnd: HWND, ctx: &mut Ctx) {
+    /// 展开/收起/切换面板。mode: 1=历史 2=设置
+    unsafe fn toggle_panel(hwnd: HWND, ctx: &mut Ctx, mode: u8) {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
 
         let win_w = dp(BAR_W);
-        if ctx.panel_open {
-            // 收起
+        // 同模式再点 -> 收起；不同模式 -> 切换内容
+        if ctx.panel_open && ctx.panel_mode == mode {
             ctx.panel_open = false;
+            ctx.panel_mode = 0;
             let bar_h = dp(BAR_H);
-            SetWindowPos(hwnd, 0, 0, 0, win_w, bar_h, SWP_NOZORDER | 0x0002); // SWP_NOMOVE
+            SetWindowPos(hwnd, 0, 0, 0, win_w, bar_h, SWP_NOZORDER | 0x0002);
             let rgn = CreateRoundRectRgn(0, 0, win_w + 1, bar_h + 1, dp(RADIUS) * 2, dp(RADIUS) * 2);
             SetWindowRgn(hwnd, rgn, 1);
         } else {
-            // 展开：加载历史
-            ctx.popup_items.clear();
-            if let Ok(a) = ctx.app.lock() {
-                for it in &a.session.history {
-                    ctx.popup_items
-                        .push((it.title.clone(), it.text.clone(), it.time.clone()));
+            if mode == 1 {
+                // 加载历史
+                ctx.popup_items.clear();
+                if let Ok(a) = ctx.app.lock() {
+                    for it in &a.session.history {
+                        ctx.popup_items
+                            .push((it.title.clone(), it.text.clone(), it.time.clone()));
+                    }
                 }
             }
             ctx.popup_hover = -1;
             ctx.popup_scroll = 0;
             ctx.panel_open = true;
+            ctx.panel_mode = mode;
 
             let total_h = dp(BAR_H) + dp(PANEL_H);
-            SetWindowPos(hwnd, 0, 0, 0, win_w, total_h, SWP_NOZORDER | 0x0002); // SWP_NOMOVE
+            SetWindowPos(hwnd, 0, 0, 0, win_w, total_h, SWP_NOZORDER | 0x0002);
             let rgn = CreateRoundRectRgn(0, 0, win_w + 1, total_h + 1, dp(RADIUS) * 2, dp(RADIUS) * 2);
             SetWindowRgn(hwnd, rgn, 1);
         }
@@ -978,37 +1099,12 @@ mod win {
                     let ev = (lparam & 0xFFFF) as u32;
                     crate::utils::log(&format!("ui: tray ev={}", ev));
                     if ev == WM_RBUTTONUP as u32 || ev == 0x007B {
-                        // 右键 / 上下文菜单：弹出托盘菜单
+                        // 右键：显示窗口并展开「设置面板」
+                        // （TrackPopupMenu 在部分系统上会空白+卡死，故改用内嵌面板）
                         let ctx = &mut *ptr;
-                        // 先在锁内取出设置值，释放锁后再弹菜单
-                        // （TrackPopupMenu 是模态阻塞，会触发 WM_TIMER 再次抢锁 → 死锁）
-                        let (auto_scan, auto_push, clear_clip, autostart, hotkey) =
-                            if let Ok(a) = ctx.app.lock() {
-                                (
-                                    a.session.settings.auto_scan,
-                                    a.session.settings.auto_push,
-                                    a.session.settings.clear_clipboard,
-                                    a.session.settings.autostart,
-                                    a.session.settings.hotkey.clone(),
-                                )
-                            } else {
-                                (true, false, true, true, "F1".to_string())
-                            };
-                        let cmd = ctx
-                            .tray
-                            .as_ref()
-                            .map(|t| {
-                                t.show_menu(
-                                    auto_scan,
-                                    auto_push,
-                                    clear_clip,
-                                    autostart,
-                                    &hotkey,
-                                    "auto",
-                                )
-                            })
-                            .unwrap_or(0);
-                        handle_tray_cmd(hwnd, ctx, cmd);
+                        ShowWindow(hwnd, SW_SHOW);
+                        SetForegroundWindow(hwnd);
+                        toggle_panel(hwnd, ctx, 2);
                     } else if ev == 0x0202 {
                         // 左键单击：切换显示 / 隐藏
                         if IsWindowVisible(hwnd) != 0 {
@@ -1087,7 +1183,7 @@ mod win {
                         if idx >= 0 && (idx as usize) < ctx.popup_items.len() {
                             ctx.input = ctx.popup_items[idx as usize].1.clone();
                         }
-                        toggle_panel(hwnd, ctx);
+                        toggle_panel(hwnd, ctx, 1);
                     }
                 }
                 0
@@ -1097,15 +1193,17 @@ mod win {
                     let ctx = &mut *ptr;
                     let x = (lparam & 0xFFFF) as i16 as i32;
                     let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
-                    crate::utils::log(&format!("ui: LBUTTONDOWN ({},{}) panel_open={}", x, y, ctx.panel_open));
                     if ctx.panel_open && y > dp(BAR_H) {
+                        if ctx.panel_mode == 2 {
+                            handle_settings_click(hwnd, ctx, panel_hit(y, 0));
+                        }
                         return 0;
                     }
                     let hit = hit_test(x, y);
                     crate::utils::log(&format!("ui: hit={:?}", hit));
                     match hit {
                         Some(Btn::History) => {
-                            toggle_panel(hwnd, ctx);
+                            toggle_panel(hwnd, ctx, 1);
                         }
                         Some(Btn::Name) => {
                             let name = crate::core::generate_name();
