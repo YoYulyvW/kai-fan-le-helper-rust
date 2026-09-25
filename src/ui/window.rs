@@ -32,11 +32,13 @@ mod win {
         PAINTSTRUCT, SRCCOPY, TRANSPARENT,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
         GetParent, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
         LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-        SetCursor, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS,
+        SetCursor, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
+        TranslateMessage, CS_DBLCLKS,
         CS_HREDRAW, CS_VREDRAW,
         CW_USEDEFAULT,
         GWLP_USERDATA, IDC_ARROW, LB_ADDSTRING, LB_GETCURSEL, LBS_NOTIFY, MSG, SM_CXSCREEN, SW_HIDE,
@@ -198,6 +200,8 @@ mod win {
         pub chooser_prev_hwnd: isize,
         /// 映射选择器：打开时助手是否在前台
         pub chooser_target_assistant: bool,
+        /// 是否显示名字按钮（缓存）
+        pub show_name: bool,
         /// 面板列表项：(标题, 完整文本, 时间)
         pub popup_items: Vec<(String, String, String)>,
         /// 面板悬停项索引
@@ -286,6 +290,7 @@ mod win {
                 mapping_items: Vec::new(),
                 chooser_prev_hwnd: 0,
                 chooser_target_assistant: false,
+                show_name: session_show_name(&app),
                 popup_items: Vec::new(),
                 popup_hover: -1,
                 popup_scroll: 0,
@@ -484,7 +489,8 @@ mod win {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let hdc = BeginPaint(hwnd, &mut ps);
 
-        let win_w = dp(BAR_W);
+        let (_hx, _nx, _sx, _cx, bar_w) = layout(ctx.show_name);
+        let win_w = dp(bar_w);
         let win_h = if ctx.panel_open { dp(BAR_H) + dp(PANEL_H) } else { dp(BAR_H) };
 
         // 双缓冲
@@ -530,18 +536,14 @@ mod win {
             };
             g.text(f(INPUT_X + 10), f(INPUT_Y), f(INPUT_W - 16), f(INPUT_H), &shown, argb(ic), f(13), false, false);
 
-            // 按钮
-            let show_name = ctx
-                .app
-                .lock()
-                .map(|a| a.session.settings.show_name_btn)
-                .unwrap_or(true);
-            draw_icon_btn(&g, &f, th, BTN_HISTORY_X, BTN_HISTORY_W, "📋", ctx.hover == Some(Btn::History));
-            if show_name {
-                draw_icon_btn(&g, &f, th, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
+            // 按钮（动态布局）
+            let (hx, nx, sx, cx, _w) = layout(ctx.show_name);
+            draw_icon_btn(&g, &f, th, hx, BTN_HISTORY_W, "📋", ctx.hover == Some(Btn::History));
+            if ctx.show_name {
+                draw_icon_btn(&g, &f, th, nx, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
             }
-            draw_btn_gp(&g, &f, th, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
-            draw_btn_gp(&g, &f, th, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
+            draw_btn_gp(&g, &f, th, sx, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
+            draw_btn_gp(&g, &f, th, cx, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
 
             // 展开的面板
             if ctx.panel_open {
@@ -789,17 +791,58 @@ mod win {
         );
     }
 
-    fn hit_test(x: i32, y: i32) -> Option<Btn> {
+    /// 启动时读取 show_name_btn
+    fn session_show_name(app: &std::sync::Arc<std::sync::Mutex<crate::app::App>>) -> bool {
+        app.lock()
+            .map(|a| a.session.settings.show_name_btn)
+            .unwrap_or(true)
+    }
+
+    /// 依 show_name 重新设置窗口宽度（保持右边缘不变）
+    unsafe fn relayout_bar(hwnd: HWND, ctx: &Ctx) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
+        let (_hx, _nx, _sx, _cx, bar_w) = layout(ctx.show_name);
+        let w = dp(bar_w);
+        let h = if ctx.panel_open {
+            dp(BAR_H) + dp(PANEL_H)
+        } else {
+            dp(BAR_H)
+        };
+        let mut rect: RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut rect);
+        SetWindowPos(hwnd, 0, rect.right - w, rect.top, w, h, SWP_NOZORDER);
+        let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, dp(RADIUS) * 2, dp(RADIUS) * 2);
+        SetWindowRgn(hwnd, rgn, 1);
+    }
+
+    /// 面板可见行数
+    fn panel_visible_rows() -> i32 {
+        ((PANEL_H - PANEL_HEADER - 8) / PANEL_ROW_H).max(1)
+    }
+
+    /// 动态布局：返回 (history_x, name_x, send_x, close_x, bar_w)
+    fn layout(show_name: bool) -> (i32, i32, i32, i32, i32) {
+        const HX: i32 = 272;
+        const HW: i32 = 36;
+        if show_name {
+            (HX, HX + HW + 4, HX + HW + 4 + HW + 4, HX + HW + 4 + HW + 4 + 48 + 4, 440)
+        } else {
+            (HX, 0, HX + HW + 4, HX + HW + 4 + 48 + 4, 400)
+        }
+    }
+
+    fn hit_test(x: i32, y: i32, show_name: bool) -> Option<Btn> {
         if y < dp(BTN_Y) || y > dp(BTN_Y + BTN_H) {
             return None;
         }
-        if x >= dp(BTN_HISTORY_X) && x < dp(BTN_HISTORY_X + BTN_HISTORY_W) {
+        let (hx, nx, sx, cx, _w) = layout(show_name);
+        if x >= dp(hx) && x < dp(hx + BTN_HISTORY_W) {
             Some(Btn::History)
-        } else if x >= dp(BTN_NAME_X) && x < dp(BTN_NAME_X + BTN_NAME_W) {
+        } else if show_name && x >= dp(nx) && x < dp(nx + BTN_NAME_W) {
             Some(Btn::Name)
-        } else if x >= dp(BTN_SEND_X) && x < dp(BTN_SEND_X + BTN_SEND_W) {
+        } else if x >= dp(sx) && x < dp(sx + BTN_SEND_W) {
             Some(Btn::Send)
-        } else if x >= dp(BTN_CLOSE_X) && x < dp(BTN_CLOSE_X + BTN_CLOSE_W) {
+        } else if x >= dp(cx) && x < dp(cx + BTN_CLOSE_W) {
             Some(Btn::Close)
         } else {
             None
@@ -976,11 +1019,13 @@ mod win {
     unsafe fn toggle_panel(hwnd: HWND, ctx: &mut Ctx, mode: u8) {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
 
-        let win_w = dp(BAR_W);
+        let (_hx, _nx, _sx, _cx, bw) = layout(ctx.show_name);
+        let win_w = dp(bw);
         // 同模式再点 -> 收起；不同模式 -> 切换内容
         if ctx.panel_open && ctx.panel_mode == mode {
             ctx.panel_open = false;
             ctx.panel_mode = 0;
+            ReleaseCapture();
             let bar_h = dp(BAR_H);
             SetWindowPos(hwnd, 0, 0, 0, win_w, bar_h, SWP_NOZORDER | 0x0002);
             let rgn = CreateRoundRectRgn(0, 0, win_w + 1, bar_h + 1, dp(RADIUS) * 2, dp(RADIUS) * 2);
@@ -1010,6 +1055,8 @@ mod win {
             ctx.popup_scroll = 0;
             ctx.panel_open = true;
             ctx.panel_mode = mode;
+            // 捕获鼠标：点击面板外任意位置都能收到消息，用于关闭
+            SetCapture(hwnd);
 
             let total_h = dp(BAR_H) + dp(PANEL_H);
             SetWindowPos(hwnd, 0, 0, 0, win_w, total_h, SWP_NOZORDER | 0x0002);
@@ -1233,7 +1280,7 @@ mod win {
                     let ctx = &mut *ptr;
                     let x = (lparam & 0xFFFF) as i16 as i32;
                     let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
-                    let h = hit_test(x, y);
+                    let h = hit_test(x, y, ctx.show_name);
                     if h != ctx.hover {
                         ctx.hover = h;
                         InvalidateRect(hwnd, std::ptr::null(), 0);
@@ -1251,6 +1298,23 @@ mod win {
                 }
                 0
             }
+            WM_MOUSEWHEEL => {
+                if !ptr.is_null() {
+                    let ctx = &mut *ptr;
+                    if ctx.panel_open && ctx.panel_mode != 2 {
+                        let delta = ((wparam >> 16) & 0xFFFF) as i16 as i32;
+                        let visible = panel_visible_rows();
+                        let max = (ctx.popup_items.len() as i32 - visible).max(0);
+                        if delta > 0 {
+                            ctx.popup_scroll = (ctx.popup_scroll - 1).max(0);
+                        } else {
+                            ctx.popup_scroll = (ctx.popup_scroll + 1).min(max);
+                        }
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                }
+                0
+            }
             WM_LBUTTONDBLCLK => {
                 if !ptr.is_null() {
                     let ctx = &mut *ptr;
@@ -1263,6 +1327,8 @@ mod win {
                             if mode == 3 {
                                 // 映射选择：复制到剪贴板
                                 crate::platform::clipboard::set_text(&text);
+                                // 同步 last_clipboard，防止监听把内容读回填进输入框
+                                ctx.last_clipboard = text.trim().to_string();
                                 let target_assistant = ctx.chooser_target_assistant;
                                 let prev_hwnd = ctx.chooser_prev_hwnd;
                                 // 先收起面板
@@ -1301,13 +1367,21 @@ mod win {
                     let ctx = &mut *ptr;
                     let x = (lparam & 0xFFFF) as i16 as i32;
                     let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+                    if ctx.panel_open {
+                        let (.., bw) = layout(ctx.show_name);
+                        if x < 0 || x > dp(bw) || y < 0 || y > dp(BAR_H) + dp(PANEL_H) {
+                            ReleaseCapture();
+                            toggle_panel(hwnd, ctx, ctx.panel_mode);
+                            return 0;
+                        }
+                    }
                     if ctx.panel_open && y > dp(BAR_H) {
                         if ctx.panel_mode == 2 {
                             handle_settings_click(hwnd, ctx, panel_hit(y, 0));
                         }
                         return 0;
                     }
-                    let hit = hit_test(x, y);
+                    let hit = hit_test(x, y, ctx.show_name);
                     match hit {
                         Some(Btn::History) => {
                             toggle_panel(hwnd, ctx, 1);
@@ -1315,6 +1389,7 @@ mod win {
                         Some(Btn::Name) => {
                             let name = crate::core::generate_name();
                             crate::platform::clipboard::set_text(&name);
+                            ctx.last_clipboard = name.clone();
                             ctx.input = name.clone();
                             ctx.flash_text = format!("已复制 {}", name);
                             ctx.flash_color = Colors::OK;
@@ -1392,7 +1467,9 @@ mod win {
                 if let Ok(mut a) = ctx.app.lock() {
                     a.session.settings.show_name_btn = !a.session.settings.show_name_btn;
                     a.session.settings.save();
+                    ctx.show_name = a.session.settings.show_name_btn;
                 }
+                relayout_bar(hwnd, ctx);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
             }
             ID_QUIT => PostQuitMessage(0),
