@@ -36,7 +36,8 @@ mod win {
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
         GetParent, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
         LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-        SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+        SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW,
+        CW_USEDEFAULT,
         GWLP_USERDATA, IDC_ARROW, LB_ADDSTRING, LB_GETCURSEL, LBS_NOTIFY, MSG, SM_CXSCREEN, SW_HIDE,
         SW_SHOW, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT,
         WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
@@ -185,12 +186,21 @@ mod win {
         pub popup: HWND,
         pub popup_list: HWND,
         pub hover: Option<Btn>,
+        /// 历史面板是否展开
+        pub panel_open: bool,
+        /// 面板列表项：(标题, 完整文本, 时间)
+        pub popup_items: Vec<(String, String, String)>,
+        /// 面板悬停项索引
+        pub popup_hover: i32,
+        /// 面板滚动偏移（项数）
+        pub popup_scroll: i32,
     }
 
     pub fn run(app: App) {
         let app = Arc::new(Mutex::new(app));
 
         unsafe {
+            crate::utils::log("ui: run() entered");
             dpi_aware();
             // 读取系统 DPI 缩放
             let screen_dc = GetDC(0);
@@ -200,22 +210,27 @@ mod win {
             DPI_SCALE.store(scale, Ordering::Relaxed);
 
             let hinstance = GetModuleHandleW(std::ptr::null());
-            let class_name = to_wide("KaiFanLeHelperWnd");
+            // 用进程 ID 生成唯一类名，规避崩溃残留类注册导致的 ERROR_ALREADY_EXISTS
+            let cls_name = format!("KaiFanLeHelperWnd_{}", std::process::id());
+            let class_name = to_wide(&cls_name);
 
             let mut wc: WNDCLASSEXW = std::mem::zeroed();
             wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
-            wc.style = CS_HREDRAW | CS_VREDRAW;
+            wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
             wc.lpfnWndProc = Some(wndproc);
             wc.hInstance = hinstance;
             wc.hCursor = LoadCursorW(0, IDC_ARROW);
             wc.lpszClassName = class_name.as_ptr();
-            RegisterClassExW(&wc);
 
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let win_w = dp(BAR_W);
             let win_h = dp(BAR_H);
             let x = screen_w - win_w - dp(20);
 
+            let rc = RegisterClassExW(&wc);
+            crate::utils::log(&format!("ui: RegisterClassExW rc={} err={}", rc, std::io::Error::last_os_error()));
+            crate::utils::log(&format!("ui: hinstance={} x={} y={} w={} h={} clsptr={:?}", hinstance, x, dp(20), win_w, win_h, class_name.as_ptr()));
+            windows_sys::Win32::Foundation::SetLastError(0);
             let hwnd = CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                 class_name.as_ptr(),
@@ -230,6 +245,7 @@ mod win {
                 hinstance,
                 std::ptr::null(),
             );
+            crate::utils::log(&format!("ui: main hwnd={} err={}", hwnd, std::io::Error::last_os_error()));
             if hwnd == 0 {
                 return;
             }
@@ -255,6 +271,10 @@ mod win {
                 popup: 0,
                 popup_list: 0,
                 hover: None,
+                panel_open: false,
+                popup_items: Vec::new(),
+                popup_hover: -1,
+                popup_scroll: 0,
             });
             let ctx_ptr = Box::into_raw(ctx);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx_ptr as isize);
@@ -277,6 +297,7 @@ mod win {
 
             ShowWindow(hwnd, SW_SHOW);
             windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(hwnd, TIMER_ID, 80, None);
+            crate::utils::log("ui: entering message loop");
 
             let mut msg: MSG = std::mem::zeroed();
             loop {
@@ -431,7 +452,7 @@ mod win {
         let hdc = BeginPaint(hwnd, &mut ps);
 
         let win_w = dp(BAR_W);
-        let win_h = dp(BAR_H);
+        let win_h = if ctx.panel_open { dp(BAR_H) + dp(PANEL_H) } else { dp(BAR_H) };
 
         // 双缓冲
         let mem_dc = CreateCompatibleDC(hdc);
@@ -478,6 +499,11 @@ mod win {
             draw_icon_btn(&g, &f, th, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
             draw_btn_gp(&g, &f, th, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
             draw_btn_gp(&g, &f, th, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
+
+            // 展开的历史面板
+            if ctx.panel_open {
+                draw_history_panel(&g, &f, th, ctx);
+            }
         }
 
         BitBlt(hdc, 0, 0, win_w, win_h, mem_dc, 0, 0, SRCCOPY);
@@ -486,6 +512,68 @@ mod win {
         DeleteObject(mem_bmp);
         DeleteDC(mem_dc);
         EndPaint(hwnd, &ps);
+    }
+
+    /// 绘制展开的历史面板
+    unsafe fn draw_history_panel<F: Fn(i32) -> f32>(
+        g: &crate::ui::gdiplus::Graphics,
+        f: &F,
+        th: &Theme,
+        ctx: &Ctx,
+    ) {
+        let panel_top = BAR_H;
+        let pw = BAR_W;
+
+        // 分隔线
+        g.fill_round(f(12), f(panel_top), f(pw - 24), f(1), 0.0, argb(th.border));
+
+        // 标题
+        g.text(
+            f(16), f(panel_top + 6), f(pw - 32), f(PANEL_HEADER - 6),
+            "📋 历史记录（双击填入）", argb(th.text), f(13), true, false,
+        );
+
+        let list_top = panel_top + PANEL_HEADER;
+        let visible_rows = ((PANEL_H - PANEL_HEADER - 8) / PANEL_ROW_H).max(1);
+        let start = ctx.popup_scroll.max(0) as usize;
+        let end = (start + visible_rows as usize).min(ctx.popup_items.len());
+
+        if ctx.popup_items.is_empty() {
+            g.text(
+                f(16), f(list_top + 20), f(pw - 32), f(40),
+                "(暂无历史记录)", argb(th.text_sub), f(13), false, false,
+            );
+            return;
+        }
+
+        for (i, idx) in (start..end).enumerate() {
+            let item = &ctx.popup_items[idx];
+            let row_y = list_top + 4 + (i as i32) * PANEL_ROW_H;
+            let hovered = ctx.popup_hover == idx as i32;
+
+            // 悬停高亮
+            if hovered {
+                g.fill_round(
+                    f(8), f(row_y), f(pw - 16), f(PANEL_ROW_H - 4),
+                    f(8), argb(rgb(99, 102, 241)),
+                );
+            }
+
+            // 标题
+            let title_color = if hovered { th.white } else { th.text };
+            g.text(
+                f(18), f(row_y + 4), f(pw - 40), f(20),
+                &truncate(&item.0, 26), argb(title_color), f(13), hovered, false,
+            );
+            // 时间
+            let time_color = if hovered { th.white } else { th.text_sub };
+            if !item.2.is_empty() {
+                g.text(
+                    f(18), f(row_y + 24), f(pw - 40), f(16),
+                    &item.2, argb(time_color), f(10), false, false,
+                );
+            }
+        }
     }
 
     /// 用 GDI+ 画图标按钮（emoji 字体）
@@ -560,64 +648,247 @@ mod win {
         }
     }
 
+    // 弹窗尺寸（逻辑像素）
+    const POPUP_W: i32 = 360;
+    const POPUP_H: i32 = 400;
+    const POPUP_HEADER: i32 = 34;
+    const POPUP_ROW_H: i32 = 44;
+    const POPUP_PAD: i32 = 8;
+
+    /// 弹出历史记录窗口（GDI+ 自绘，现代圆角风格）
     unsafe fn show_history_popup(parent: HWND, ctx: &mut Ctx) {
         let hinstance = GetModuleHandleW(std::ptr::null());
-        let cls = to_wide("KaiFanLePopup");
-        let list_cls = to_wide("LISTBOX");
+        // 类名持久化为 'static，避免临时 Vec 释放后系统引用悬垂指针
+        let cls = popup_class_name();
 
-        let mut wc: WNDCLASSEXW = std::mem::zeroed();
-        wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
-        wc.lpfnWndProc = Some(popup_proc);
-        wc.hInstance = hinstance;
-        wc.lpszClassName = cls.as_ptr();
-        RegisterClassExW(&wc);
+        // 仅注册一次
+        static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !REGISTERED.load(Ordering::Relaxed) {
+            let mut wc: WNDCLASSEXW = std::mem::zeroed();
+            wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+            wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+            wc.lpfnWndProc = Some(popup_proc);
+            wc.hInstance = hinstance;
+            wc.hCursor = LoadCursorW(0, IDC_ARROW);
+            wc.lpszClassName = cls;
+            let rc = RegisterClassExW(&wc);
+            crate::utils::log(&format!("popup: RegisterClassExW atom={} err={}", rc, std::io::Error::last_os_error()));
+            REGISTERED.store(true, Ordering::Relaxed);
+        }
+
+        // 组装列表数据
+        ctx.popup_items.clear();
+        if let Ok(a) = ctx.app.lock() {
+            for it in &a.session.history {
+                ctx.popup_items
+                    .push((it.title.clone(), it.text.clone(), it.time.clone()));
+            }
+        }
+        ctx.popup_hover = -1;
+        ctx.popup_scroll = 0;
 
         let mut rect: RECT = std::mem::zeroed();
         GetWindowRect(parent, &mut rect);
 
+        let pw = dp(POPUP_W);
+        let ph = dp(POPUP_H);
+        let mut x = rect.left;
+        // 防止超出右边缘
+        let screen_w = GetSystemMetrics(SM_CXSCREEN);
+        if x + pw > screen_w {
+            x = screen_w - pw - dp(8);
+        }
+
+        // 清除上次错误，确保拿到真实的 CreateWindow 错误
+        windows_sys::Win32::Foundation::SetLastError(0);
         let popup = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            cls.as_ptr(),
+            cls,
             to_wide("历史记录").as_ptr(),
-            WS_POPUP | WS_BORDER,
-            rect.left,
-            rect.bottom + 4,
-            dp(340),
-            dp(340),
-            parent,
+            WS_POPUP,
+            x,
+            rect.bottom + dp(4),
+            pw,
+            ph,
+            0, // 不设 owner，避免 owner 引发的创建失败
             0,
             hinstance,
             std::ptr::null(),
         );
+        crate::utils::log(&format!("popup: CreateWindowExW hwnd={} size={}x{} err={}", popup, pw, ph, std::io::Error::last_os_error()));
+        let _ = parent;
         if popup == 0 {
             return;
         }
 
-        let list = CreateWindowExW(
-            0,
-            list_cls.as_ptr(),
-            to_wide("").as_ptr(),
-            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | WS_HSCROLL | (LBS_NOTIFY as u32),
-            4,
-            4,
-            dp(332),
-            dp(332),
-            popup,
-            ID_POPUP_LIST as isize as _,
-            hinstance,
-            std::ptr::null(),
-        );
-
-        if let Ok(a) = ctx.app.lock() {
-            for it in &a.session.history {
-                SendMessageW(list, LB_ADDSTRING, 0, to_wide(&it.title).as_ptr() as isize);
-            }
-        }
+        // 圆角区域
+        let rgn = CreateRoundRectRgn(0, 0, pw + 1, ph + 1, dp(12) * 2, dp(12) * 2);
+        SetWindowRgn(popup, rgn, 1);
 
         SetWindowLongPtrW(popup, GWLP_USERDATA, ctx as *mut Ctx as isize);
         ShowWindow(popup, SW_SHOW);
         ctx.popup = popup;
-        ctx.popup_list = list;
+        ctx.popup_list = 0;
+    }
+
+    /// 绘制历史弹窗
+    unsafe fn paint_popup(hwnd: HWND, ctx: &Ctx) {
+        use crate::ui::gdiplus::Graphics;
+        let mut ps: PAINTSTRUCT = std::mem::zeroed();
+        let hdc = BeginPaint(hwnd, &mut ps);
+
+        let pw = dp(POPUP_W);
+        let ph = dp(POPUP_H);
+
+        let mem_dc = CreateCompatibleDC(hdc);
+        let mem_bmp = CreateCompatibleBitmap(hdc, pw, ph);
+        let old_bmp = SelectObject(mem_dc, mem_bmp);
+
+        let scale = DPI_SCALE.load(Ordering::Relaxed) as f32 / 100.0;
+        let th = &ctx.theme;
+        if let Some(g) = Graphics::from_hdc(mem_dc as isize) {
+            let f = |v: i32| v as f32 * scale;
+
+            // 背景
+            g.fill_round_grad(
+                0.0, 0.0, f(pw), f(ph), f(12),
+                argb(th.bg_top), argb(th.bg_bottom),
+            );
+
+            // 标题栏
+            g.text(
+                f(16), f(6), f(pw - 32), f(POPUP_HEADER),
+                "📋 历史记录（双击填入）", argb(th.text), f(14), true, false,
+            );
+
+            // 列表
+            let list_top = POPUP_HEADER;
+            let visible_rows = ((POPUP_H - list_top - POPUP_PAD) / POPUP_ROW_H).max(1);
+            let start = ctx.popup_scroll.max(0) as usize;
+            let end = (start + visible_rows as usize).min(ctx.popup_items.len());
+
+            if ctx.popup_items.is_empty() {
+                g.text(
+                    f(16), f(list_top + 20), f(pw - 32), f(40),
+                    "(暂无历史记录)", argb(th.text_sub), f(13), false, false,
+                );
+            }
+
+            for (i, idx) in (start..end).enumerate() {
+                let item = &ctx.popup_items[idx];
+                let row_y = list_top + POPUP_PAD + (i as i32) * POPUP_ROW_H;
+                let hovered = ctx.popup_hover == idx as i32;
+
+                // 行背景（悬停高亮）
+                if hovered {
+                    g.fill_round(
+                        f(POPUP_PAD), f(row_y), f(POPUP_W - POPUP_PAD * 2), f(POPUP_ROW_H - 4),
+                        f(8), argb(rgb(99, 102, 241) & 0x00FFFFFF | 0x33000000),
+                    );
+                }
+
+                // 标题
+                g.text(
+                    f(POPUP_PAD + 10), f(row_y + 3), f(POPUP_W - POPUP_PAD * 2 - 20), f(20),
+                    &truncate(&item.0, 24), argb(th.text), f(13), hovered, false,
+                );
+                // 时间
+                if !item.2.is_empty() {
+                    g.text(
+                        f(POPUP_PAD + 10), f(row_y + 22), f(POPUP_W - POPUP_PAD * 2 - 20), f(16),
+                        &item.2, argb(th.text_sub), f(10), false, false,
+                    );
+                }
+            }
+        }
+
+        BitBlt(hdc, 0, 0, pw, ph, mem_dc, 0, 0, SRCCOPY);
+        SelectObject(mem_dc, old_bmp);
+        DeleteObject(mem_bmp);
+        DeleteDC(mem_dc);
+        EndPaint(hwnd, &ps);
+    }
+
+    // 历史面板尺寸（逻辑像素）
+    const PANEL_H: i32 = 360;
+    const PANEL_ROW_H: i32 = 46;
+    const PANEL_HEADER: i32 = 30;
+
+    /// 切换历史面板的展开/收起
+    unsafe fn toggle_panel(hwnd: HWND, ctx: &mut Ctx) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
+
+        let win_w = dp(BAR_W);
+        if ctx.panel_open {
+            // 收起
+            ctx.panel_open = false;
+            let bar_h = dp(BAR_H);
+            SetWindowPos(hwnd, 0, 0, 0, win_w, bar_h, SWP_NOZORDER | 0x0002); // SWP_NOMOVE
+            let rgn = CreateRoundRectRgn(0, 0, win_w + 1, bar_h + 1, dp(RADIUS) * 2, dp(RADIUS) * 2);
+            SetWindowRgn(hwnd, rgn, 1);
+        } else {
+            // 展开：加载历史
+            ctx.popup_items.clear();
+            if let Ok(a) = ctx.app.lock() {
+                for it in &a.session.history {
+                    ctx.popup_items
+                        .push((it.title.clone(), it.text.clone(), it.time.clone()));
+                }
+            }
+            ctx.popup_hover = -1;
+            ctx.popup_scroll = 0;
+            ctx.panel_open = true;
+
+            let total_h = dp(BAR_H) + dp(PANEL_H);
+            SetWindowPos(hwnd, 0, 0, 0, win_w, total_h, SWP_NOZORDER | 0x0002); // SWP_NOMOVE
+            let rgn = CreateRoundRectRgn(0, 0, win_w + 1, total_h + 1, dp(RADIUS) * 2, dp(RADIUS) * 2);
+            SetWindowRgn(hwnd, rgn, 1);
+        }
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+    }
+
+    /// 面板命中测试：返回项索引
+    fn panel_hit(y: i32, scroll: i32) -> i32 {
+        let list_top = dp(BAR_H + PANEL_HEADER);
+        let rel = y - list_top - dp(4);
+        if rel < 0 {
+            return -1;
+        }
+        let row = rel / dp(PANEL_ROW_H);
+        scroll + row
+    }
+
+    /// 弹窗类名（'static 持久化）
+    fn popup_class_name() -> *const u16 {
+        use std::sync::OnceLock;
+        static NAME: OnceLock<Vec<u16>> = OnceLock::new();
+        NAME.get_or_init(|| {
+            "KaiFanLePopup ".encode_utf16().collect()
+        })
+        .as_ptr()
+    }
+
+    /// 截断过长标题
+    fn truncate(s: &str, max: usize) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() <= max {
+            s.to_string()
+        } else {
+            let mut t: String = chars[..max].iter().collect();
+            t.push('…');
+            t
+        }
+    }
+
+    /// 命中测试：返回弹窗内的列表项索引
+    fn popup_hit(y: i32, scroll: i32) -> i32 {
+        let list_top = dp(POPUP_HEADER);
+        let rel = y - list_top - dp(POPUP_PAD);
+        if rel < 0 {
+            return -1;
+        }
+        let row = rel / dp(POPUP_ROW_H);
+        scroll + row
     }
 
     unsafe extern "system" fn popup_proc(
@@ -626,29 +897,56 @@ mod win {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        let ctx = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
         match msg {
-            WM_COMMAND => {
-                let code = ((wparam >> 16) & 0xFFFF) as u32;
-                if code == 2 {
-                    let ctx = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
-                    if !ctx.is_null() {
-                        let list = (*ctx).popup_list;
-                        let sel = SendMessageW(list, LB_GETCURSEL, 0, 0);
-                        if sel >= 0 {
-                            if let Ok(a) = (*ctx).app.lock() {
-                                if let Some(it) = a.session.history.get(sel as usize) {
-                                    (*ctx).input = it.text.clone();
-                                }
-                            }
-                        }
-                        let parent = GetParent(hwnd);
-                        DestroyWindow(hwnd);
-                        (*ctx).popup = 0;
-                        (*ctx).popup_list = 0;
-                        if parent != 0 {
-                            InvalidateRect(parent, std::ptr::null(), 0);
-                        }
+            WM_PAINT => {
+                if !ctx.is_null() {
+                    paint_popup(hwnd, &*ctx);
+                }
+                0
+            }
+            WM_MOUSEMOVE => {
+                if !ctx.is_null() {
+                    let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+                    let idx = popup_hit(y, (*ctx).popup_scroll);
+                    let valid = idx >= 0 && (idx as usize) < (*ctx).popup_items.len();
+                    let new_hover = if valid { idx } else { -1 };
+                    if new_hover != (*ctx).popup_hover {
+                        (*ctx).popup_hover = new_hover;
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
                     }
+                }
+                0
+            }
+            WM_LBUTTONDBLCLK => {
+                if !ctx.is_null() {
+                    let idx = (*ctx).popup_hover;
+                    if idx >= 0 && (idx as usize) < (*ctx).popup_items.len() {
+                        (*ctx).input = (*ctx).popup_items[idx as usize].1.clone();
+                    }
+                    let parent = GetParent(hwnd);
+                    DestroyWindow(hwnd);
+                    (*ctx).popup = 0;
+                    if parent != 0 {
+                        InvalidateRect(parent, std::ptr::null(), 0);
+                    }
+                }
+                0
+            }
+            WM_LBUTTONDOWN => {
+                // 单击也选中（更友好）
+                0
+            }
+            WM_MOUSEWHEEL => {
+                if !ctx.is_null() {
+                    let delta = ((wparam >> 16) & 0xFFFF) as i16 as i32;
+                    if delta > 0 {
+                        (*ctx).popup_scroll = ((*ctx).popup_scroll - 1).max(0);
+                    } else {
+                        let max = ((*ctx).popup_items.len() as i32 - 5).max(0);
+                        (*ctx).popup_scroll = ((*ctx).popup_scroll + 1).min(max);
+                    }
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
                 }
                 0
             }
@@ -665,7 +963,14 @@ mod win {
     ) -> LRESULT {
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
 
+        // 诊断：记录早期窗口消息
+        if msg == 0x0081 || msg == 0x0001 {
+            crate::utils::log(&format!("wndproc: msg=0x{:X}", msg));
+        }
+
         match msg {
+            // WM_NCCREATE：必须返回 TRUE(1) 才能继续创建窗口
+            0x0081 => 1,
             WM_CREATE => 0,
             m if m == WM_TRAYICON => {
                 if !ptr.is_null() {
@@ -675,23 +980,34 @@ mod win {
                     if ev == WM_RBUTTONUP as u32 || ev == 0x007B {
                         // 右键 / 上下文菜单：弹出托盘菜单
                         let ctx = &mut *ptr;
-                        let cmd = if let Ok(a) = ctx.app.lock() {
-                            ctx.tray
-                                .as_ref()
-                                .map(|t| {
-                                    t.show_menu(
-                                        a.session.settings.auto_scan,
-                                        a.session.settings.auto_push,
-                                        a.session.settings.clear_clipboard,
-                                        a.session.settings.autostart,
-                                        &a.session.settings.hotkey,
-                                        "auto",
-                                    )
-                                })
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
+                        // 先在锁内取出设置值，释放锁后再弹菜单
+                        // （TrackPopupMenu 是模态阻塞，会触发 WM_TIMER 再次抢锁 → 死锁）
+                        let (auto_scan, auto_push, clear_clip, autostart, hotkey) =
+                            if let Ok(a) = ctx.app.lock() {
+                                (
+                                    a.session.settings.auto_scan,
+                                    a.session.settings.auto_push,
+                                    a.session.settings.clear_clipboard,
+                                    a.session.settings.autostart,
+                                    a.session.settings.hotkey.clone(),
+                                )
+                            } else {
+                                (true, false, true, true, "F1".to_string())
+                            };
+                        let cmd = ctx
+                            .tray
+                            .as_ref()
+                            .map(|t| {
+                                t.show_menu(
+                                    auto_scan,
+                                    auto_push,
+                                    clear_clip,
+                                    autostart,
+                                    &hotkey,
+                                    "auto",
+                                )
+                            })
+                            .unwrap_or(0);
                         handle_tray_cmd(hwnd, ctx, cmd);
                     } else if ev == 0x0202 {
                         // 左键单击：切换显示 / 隐藏
@@ -749,6 +1065,30 @@ mod win {
                         ctx.hover = h;
                         InvalidateRect(hwnd, std::ptr::null(), 0);
                     }
+                    // 面板悬停
+                    if ctx.panel_open && y > dp(BAR_H) {
+                        let idx = panel_hit(y, ctx.popup_scroll);
+                        let valid = idx >= 0 && (idx as usize) < ctx.popup_items.len();
+                        let new_hover = if valid { idx } else { -1 };
+                        if new_hover != ctx.popup_hover {
+                            ctx.popup_hover = new_hover;
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+                    }
+                }
+                0
+            }
+            WM_LBUTTONDBLCLK => {
+                if !ptr.is_null() {
+                    let ctx = &mut *ptr;
+                    let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+                    if ctx.panel_open && y > dp(BAR_H) {
+                        let idx = panel_hit(y, ctx.popup_scroll);
+                        if idx >= 0 && (idx as usize) < ctx.popup_items.len() {
+                            ctx.input = ctx.popup_items[idx as usize].1.clone();
+                        }
+                        toggle_panel(hwnd, ctx);
+                    }
                 }
                 0
             }
@@ -757,17 +1097,15 @@ mod win {
                     let ctx = &mut *ptr;
                     let x = (lparam & 0xFFFF) as i16 as i32;
                     let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+                    crate::utils::log(&format!("ui: LBUTTONDOWN ({},{}) panel_open={}", x, y, ctx.panel_open));
+                    if ctx.panel_open && y > dp(BAR_H) {
+                        return 0;
+                    }
                     let hit = hit_test(x, y);
-                    crate::utils::log(&format!("ui: click lparam=({},{}) hit={:?}", x, y, hit));
+                    crate::utils::log(&format!("ui: hit={:?}", hit));
                     match hit {
                         Some(Btn::History) => {
-                            if ctx.popup != 0 {
-                                DestroyWindow(ctx.popup);
-                                ctx.popup = 0;
-                                ctx.popup_list = 0;
-                            } else {
-                                show_history_popup(hwnd, ctx);
-                            }
+                            toggle_panel(hwnd, ctx);
                         }
                         Some(Btn::Name) => {
                             let name = crate::core::generate_name();
