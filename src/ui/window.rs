@@ -190,8 +190,10 @@ mod win {
         pub hover: Option<Btn>,
         /// 面板是否展开
         pub panel_open: bool,
-        /// 面板模式：0=无 1=历史 2=设置
+        /// 面板模式：0=无 1=历史 2=设置 3=映射选择
         pub panel_mode: u8,
+        /// 待选的映射项（mode=3 时）：(标题, 完整文本)
+        pub mapping_items: Vec<(String, String)>,
         /// 面板列表项：(标题, 完整文本, 时间)
         pub popup_items: Vec<(String, String, String)>,
         /// 面板悬停项索引
@@ -277,6 +279,7 @@ mod win {
                 hover: None,
                 panel_open: false,
                 panel_mode: 0,
+                mapping_items: Vec::new(),
                 popup_items: Vec::new(),
                 popup_hover: -1,
                 popup_scroll: 0,
@@ -323,7 +326,7 @@ mod win {
         }
     }
 
-    unsafe fn pump(ctx: &mut Ctx) {
+    unsafe fn pump(hwnd: HWND, ctx: &mut Ctx) {
         let mut actions = Vec::new();
         if let Ok(mut a) = ctx.app.lock() {
             while let Some(ev) = a.try_event() {
@@ -340,7 +343,18 @@ mod win {
                     ctx.flash_until = Some(std::time::Instant::now());
                 }
                 UiAction::SetInput(text) => ctx.input = text,
-                UiAction::ShowMappingChooser(_, _) => {}
+                UiAction::ShowMappingChooser(_key, items) => {
+                    // 加载映射候选（标题用解析出的剧名）
+                    ctx.mapping_items.clear();
+                    for it in items {
+                        let title = match crate::core::title::parse(&it) {
+                            Some(p) => p.title,
+                            None => it.chars().take(20).collect(),
+                        };
+                        ctx.mapping_items.push((title, it));
+                    }
+                    toggle_panel(hwnd, ctx, 3);
+                }
             }
         }
         if let Ok(a) = ctx.app.lock() {
@@ -485,9 +499,12 @@ mod win {
             } else {
                 (ctx.status1.clone(), ctx.status2.clone(), ctx.status1_color)
             };
-            g.text(f(STATUS_X), f(4), f(120), f(18), &s1, argb(s1c), f(13), true, false);
-            if !s2.is_empty() {
-                g.text(f(STATUS_X), f(23), f(120), f(16), &s2, argb(th.text_sub), f(11), false, false);
+            // 单行时垂直居中；双行时才上下排布
+            if s2.is_empty() {
+                g.text(f(STATUS_X), f(0), f(120), f(BAR_H), &s1, argb(s1c), f(13), true, false);
+            } else {
+                g.text(f(STATUS_X), f(3), f(120), f(20), &s1, argb(s1c), f(13), true, false);
+                g.text(f(STATUS_X), f(25), f(120), f(16), &s2, argb(th.text_sub), f(11), false, false);
             }
 
             // 输入框
@@ -507,10 +524,11 @@ mod win {
 
             // 展开的面板
             if ctx.panel_open {
-                if ctx.panel_mode == 1 {
-                    draw_history_panel(&g, &f, th, ctx);
-                } else if ctx.panel_mode == 2 {
-                    draw_settings_panel(&g, &f, th, ctx);
+                match ctx.panel_mode {
+                    1 => draw_history_panel(&g, &f, th, ctx, "📋 历史记录（双击填入）"),
+                    3 => draw_history_panel(&g, &f, th, ctx, "📌 选择要粘贴的内容（双击）"),
+                    2 => draw_settings_panel(&g, &f, th, ctx),
+                    _ => {}
                 }
             }
         }
@@ -529,6 +547,7 @@ mod win {
         f: &F,
         th: &Theme,
         ctx: &Ctx,
+        title: &str,
     ) {
         let panel_top = BAR_H;
         let pw = BAR_W;
@@ -539,7 +558,7 @@ mod win {
         // 标题
         g.text(
             f(16), f(panel_top + 6), f(pw - 32), f(PANEL_HEADER - 6),
-            "📋 历史记录（双击填入）", argb(th.text), f(13), true, false,
+            title, argb(th.text), f(13), true, false,
         );
 
         let list_top = panel_top + PANEL_HEADER;
@@ -951,9 +970,19 @@ mod win {
                 ctx.popup_items.clear();
                 if let Ok(a) = ctx.app.lock() {
                     for it in &a.session.history {
+                        // 双击后填入解析过的展示文本（剧名，极速加后缀）
+                        let display = a.session.display_for_history(&it.text);
                         ctx.popup_items
-                            .push((it.title.clone(), it.text.clone(), it.time.clone()));
+                            .push((it.title.clone(), display, it.time.clone()));
                     }
+                }
+            }
+            if mode == 3 {
+                // 映射选择：把 mapping_items 转成 popup_items 供列表绘制
+                ctx.popup_items.clear();
+                for (title, full) in &ctx.mapping_items {
+                    ctx.popup_items
+                        .push((title.clone(), full.clone(), String::new()));
                 }
             }
             ctx.popup_hover = -1;
@@ -1144,7 +1173,7 @@ mod win {
             WM_TIMER => {
                 if !ptr.is_null() {
                     let ctx = &mut *ptr;
-                    pump(ctx);
+                    pump(hwnd, ctx);
                     let text = crate::platform::clipboard::get_text();
                     let text = text.trim().to_string();
                     if !text.is_empty() && text != ctx.last_clipboard {
@@ -1204,11 +1233,21 @@ mod win {
                     let ctx = &mut *ptr;
                     let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
                     if ctx.panel_open && y > dp(BAR_H) {
+                        let mode = ctx.panel_mode;
                         let idx = panel_hit(y, ctx.popup_scroll);
                         if idx >= 0 && (idx as usize) < ctx.popup_items.len() {
-                            ctx.input = ctx.popup_items[idx as usize].1.clone();
+                            let text = ctx.popup_items[idx as usize].1.clone();
+                            if mode == 3 {
+                                // 映射选择：复制并粘贴
+                                crate::platform::clipboard::set_text(&text);
+                                if let Ok(mut a) = ctx.app.lock() {
+                                    a.apply_mapping_text(&text);
+                                }
+                            } else {
+                                ctx.input = text;
+                            }
                         }
-                        toggle_panel(hwnd, ctx, 1);
+                        toggle_panel(hwnd, ctx, mode);
                     }
                 }
                 0

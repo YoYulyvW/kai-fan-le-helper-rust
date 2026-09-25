@@ -221,15 +221,24 @@ pub fn default_mappings() -> BTreeMap<String, Vec<String>> {
 }
 
 fn mapping_config_path() -> PathBuf {
+    // 1) exe 同目录（分发时首选）
     let exe_path = exe_dir().join(MAPPING_FILE_NAME);
     if exe_path.exists() {
         return exe_path;
     }
+    // 2) 当前工作目录（开发/手动放置时）
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_path = cwd.join(MAPPING_FILE_NAME);
+        if cwd_path.exists() {
+            return cwd_path;
+        }
+    }
+    // 3) 用户目录 ~/.mappings.txt
     let user_path = home_dir().join(format!(".{}", MAPPING_FILE_NAME));
     if user_path.exists() {
         return user_path;
     }
-    // 尝试写入默认文件到 exe 目录，失败则退回用户目录
+    // 都不存在：写默认文件到 exe 目录，失败则退回用户目录
     if write_default_mapping(&exe_path).is_ok() {
         exe_path
     } else {
