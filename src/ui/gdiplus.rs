@@ -220,9 +220,10 @@ impl Graphics {
             }
             let mut fmt: GpStringFormat = ptr::null_mut();
             GdipCreateStringFormat(0, 0, &mut fmt);
+            // 水平对齐由 center 控制；垂直始终居中
             let align = if center { 1 } else { 0 };
             GdipSetStringFormatAlign(fmt, align);
-            GdipSetStringFormatLineAlign(fmt, align);
+            GdipSetStringFormatLineAlign(fmt, 1); // 1 = Center
 
             let rect = RectF { x, y, w, h };
             let mut text: Vec<u16> = s.encode_utf16().collect();
