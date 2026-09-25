@@ -194,6 +194,10 @@ mod win {
         pub panel_mode: u8,
         /// 待选的映射项（mode=3 时）：(标题, 完整文本)
         pub mapping_items: Vec<(String, String)>,
+        /// 映射选择器：打开时的前台窗口（选择后恢复并粘贴）
+        pub chooser_prev_hwnd: isize,
+        /// 映射选择器：打开时助手是否在前台
+        pub chooser_target_assistant: bool,
         /// 面板列表项：(标题, 完整文本, 时间)
         pub popup_items: Vec<(String, String, String)>,
         /// 面板悬停项索引
@@ -280,6 +284,8 @@ mod win {
                 panel_open: false,
                 panel_mode: 0,
                 mapping_items: Vec::new(),
+                chooser_prev_hwnd: 0,
+                chooser_target_assistant: false,
                 popup_items: Vec::new(),
                 popup_hover: -1,
                 popup_scroll: 0,
@@ -344,6 +350,14 @@ mod win {
                 }
                 UiAction::SetInput(text) => ctx.input = text,
                 UiAction::ShowMappingChooser(_key, items) => {
+                    // 展开面板前，记录当前前台窗口与助手聚焦状态
+                    // （否则双击时工具条已抢焦点，会误填入输入框）
+                    ctx.chooser_prev_hwnd = crate::platform::foreground::foreground_hwnd();
+                    ctx.chooser_target_assistant =
+                        crate::platform::foreground::window_belongs_to_current_process(
+                            ctx.chooser_prev_hwnd,
+                        ) || crate::platform::foreground::cursor_in_window(hwnd as isize);
+
                     // 加载映射候选（标题用解析出的剧名）
                     ctx.mapping_items.clear();
                     for it in items {
@@ -517,8 +531,15 @@ mod win {
             g.text(f(INPUT_X + 10), f(INPUT_Y), f(INPUT_W - 16), f(INPUT_H), &shown, argb(ic), f(13), false, false);
 
             // 按钮
+            let show_name = ctx
+                .app
+                .lock()
+                .map(|a| a.session.settings.show_name_btn)
+                .unwrap_or(true);
             draw_icon_btn(&g, &f, th, BTN_HISTORY_X, BTN_HISTORY_W, "📋", ctx.hover == Some(Btn::History));
-            draw_icon_btn(&g, &f, th, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
+            if show_name {
+                draw_icon_btn(&g, &f, th, BTN_NAME_X, BTN_NAME_W, "🎲", ctx.hover == Some(Btn::Name));
+            }
             draw_btn_gp(&g, &f, th, BTN_SEND_X, BTN_SEND_W, "发送", ctx.hover == Some(Btn::Send), true);
             draw_btn_gp(&g, &f, th, BTN_CLOSE_X, BTN_CLOSE_W, "×", ctx.hover == Some(Btn::Close), false);
 
@@ -1132,17 +1153,18 @@ mod win {
                     if ev == WM_RBUTTONUP as u32 || ev == 0x007B {
                         // 右键：在光标处弹出托盘菜单
                         let ctx = &mut *ptr;
-                        let (auto_scan, auto_push, clear_clip, autostart, hotkey) =
+                        let (auto_scan, auto_push, clear_clip, autostart, show_name_btn, hotkey) =
                             if let Ok(a) = ctx.app.lock() {
                                 (
                                     a.session.settings.auto_scan,
                                     a.session.settings.auto_push,
                                     a.session.settings.clear_clipboard,
                                     a.session.settings.autostart,
+                                    a.session.settings.show_name_btn,
                                     a.session.settings.hotkey.clone(),
                                 )
                             } else {
-                                (true, false, true, true, "F1".to_string())
+                                (true, false, true, true, true, "F1".to_string())
                             };
                         let cmd = ctx
                             .tray
@@ -1153,6 +1175,7 @@ mod win {
                                     auto_push,
                                     clear_clip,
                                     autostart,
+                                    show_name_btn,
                                     &hotkey,
                                     "auto",
                                 )
@@ -1238,11 +1261,32 @@ mod win {
                         if idx >= 0 && (idx as usize) < ctx.popup_items.len() {
                             let text = ctx.popup_items[idx as usize].1.clone();
                             if mode == 3 {
-                                // 映射选择：复制并粘贴
+                                // 映射选择：复制到剪贴板
                                 crate::platform::clipboard::set_text(&text);
-                                if let Ok(mut a) = ctx.app.lock() {
-                                    a.apply_mapping_text(&text);
+                                let target_assistant = ctx.chooser_target_assistant;
+                                let prev_hwnd = ctx.chooser_prev_hwnd;
+                                // 先收起面板
+                                toggle_panel(hwnd, ctx, mode);
+                                // 恢复到之前的前台窗口
+                                if !target_assistant && prev_hwnd != 0 {
+                                    crate::platform::foreground::restore_foreground(prev_hwnd);
                                 }
+                                // 记录剧名到历史
+                                if let Ok(mut a) = ctx.app.lock() {
+                                    let _ = a.on_clipboard_text(&text);
+                                }
+                                if target_assistant {
+                                    // 助手在前台：填入输入框
+                                    ctx.input = text;
+                                } else {
+                                    // 其它程序：延迟模拟 Ctrl+V
+                                    std::thread::spawn(|| {
+                                        std::thread::sleep(std::time::Duration::from_millis(60));
+                                        let _ = crate::platform::input::send_ctrl_v();
+                                    });
+                                }
+                                InvalidateRect(hwnd, std::ptr::null(), 0);
+                                return 0;
                             } else {
                                 ctx.input = text;
                             }
@@ -1344,6 +1388,13 @@ mod win {
                     let _ = crate::platform::autostart::set_autostart(v);
                 }
             }
+            ID_TOGGLE_NAME_BTN => {
+                if let Ok(mut a) = ctx.app.lock() {
+                    a.session.settings.show_name_btn = !a.session.settings.show_name_btn;
+                    a.session.settings.save();
+                }
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+            }
             ID_QUIT => PostQuitMessage(0),
             c if (ID_HOTKEY_BASE..ID_HOTKEY_BASE + 13).contains(&c) => {
                 let n = c - ID_HOTKEY_BASE;
@@ -1353,6 +1404,18 @@ mod win {
                     a.session.settings.save();
                     a.reload_hotkeys();
                 }
+            }
+            ID_THEME_AUTO => {
+                ctx.theme = Theme::detect();
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+            }
+            ID_THEME_LIGHT => {
+                ctx.theme = Theme::light();
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+            }
+            ID_THEME_DARK => {
+                ctx.theme = Theme::dark();
+                InvalidateRect(hwnd, std::ptr::null(), 0);
             }
             _ => {}
         }

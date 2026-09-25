@@ -48,6 +48,7 @@ mod imp {
     pub const ID_AUTO_PUSH: usize = 1004;
     pub const ID_CLEAR_CLIP: usize = 1005;
     pub const ID_AUTOSTART: usize = 1006;
+    pub const ID_TOGGLE_NAME_BTN: usize = 1008;
     pub const ID_QUIT: usize = 1007;
 
     // 热键命令：F1..F12 -> 1100..1111
@@ -100,6 +101,7 @@ mod imp {
             auto_push: bool,
             clear_clip: bool,
             autostart: bool,
+            show_name_btn: bool,
             hotkey: &str,
             theme: &str,
         ) -> usize {
@@ -116,6 +118,7 @@ mod imp {
                 AppendMenuW(menu, MF_STRING | check(auto_push), ID_AUTO_PUSH, wide("识别后自动推送").as_ptr());
                 AppendMenuW(menu, MF_STRING | check(clear_clip), ID_CLEAR_CLIP, wide("粘贴后清空剪贴板").as_ptr());
                 AppendMenuW(menu, MF_STRING | check(autostart), ID_AUTOSTART, wide("开机自启动").as_ptr());
+                AppendMenuW(menu, MF_STRING | check(show_name_btn), ID_TOGGLE_NAME_BTN, wide("显示生成名字按钮").as_ptr());
                 AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
 
                 // 热键子菜单
