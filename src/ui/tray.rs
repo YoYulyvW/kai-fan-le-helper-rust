@@ -11,14 +11,20 @@ mod imp {
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, PostMessageW, SetForegroundWindow,
-        TrackPopupMenu, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, TPM_RETURNCMD,
-        TPM_RIGHTBUTTON,
+        AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, GetForegroundWindow,
+        PostMessageW, SetForegroundWindow, TrackPopupMenu, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
+        MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON,
     };
 
     #[link(name = "user32")]
     extern "system" {
-        fn keybd_event(bvk: u8, bscan: u8, dwflags: u32, dwextrainfo: usize);
+        fn AttachThreadInput(id_attach: u32, id_attach_to: u32, f_attach: i32) -> i32;
+        fn GetWindowThreadProcessId(hwnd: HWND, pid: *mut u32) -> u32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThreadId() -> u32;
     }
 
     /// 创建一个绿色圆角图标（简化：用系统 IDI_APPLICATION 回退）
@@ -135,17 +141,24 @@ mod imp {
                 AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
                 AppendMenuW(menu, MF_STRING, ID_QUIT, wide("退出").as_ptr());
 
-                // 模拟 ALT 键，解除前台窗口锁定（托盘菜单经典修复）
-                keybd_event(0x12, 0, 0, 0); // VK_MENU down
-                keybd_event(0x12, 0, 2, 0); // VK_MENU up
+                // 关键：用 AttachThreadInput 强制获取前台权限，
+                // 否则托盘菜单会空白且无法点击（经典 Win32 陷阱）
+                let fg = GetForegroundWindow();
+                let our_tid = GetCurrentThreadId();
+                let fg_tid = if fg != 0 { GetWindowThreadProcessId(fg, std::ptr::null_mut()) } else { 0 };
+
+                if fg_tid != 0 && fg_tid != our_tid {
+                    AttachThreadInput(our_tid, fg_tid, 1);
+                }
                 SetForegroundWindow(self.hwnd);
+                if fg_tid != 0 && fg_tid != our_tid {
+                    AttachThreadInput(our_tid, fg_tid, 0);
+                }
                 crate::utils::log("tray: menu shown");
 
                 let mut pt = POINT { x: 0, y: 0 };
                 GetCursorPos(&mut pt);
 
-                // 不用 TPM_RETURNCMD，改为通过 WM_COMMAND 回调，并在之后 PostMessage(WM_NULL)
-                // 以让菜单正确响应/关闭（MSDN 明确要求）
                 let cmd = TrackPopupMenu(
                     menu,
                     TPM_RETURNCMD | TPM_RIGHTBUTTON,

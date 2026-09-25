@@ -36,7 +36,7 @@ mod win {
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
         GetParent, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
         LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-        SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS,
+        SetCursor, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS,
         CS_HREDRAW, CS_VREDRAW,
         CW_USEDEFAULT,
         GWLP_USERDATA, IDC_ARROW, LB_ADDSTRING, LB_GETCURSEL, LBS_NOTIFY, MSG, SM_CXSCREEN, SW_HIDE,
@@ -45,7 +45,7 @@ mod win {
         WS_HSCROLL, WS_POPUP, WS_VISIBLE, WS_VSCROLL,
     };
 
-    /// DPI 缩放因子（百分比，默认 100）
+    /// DPI 缩放因子（百分比）
     static DPI_SCALE: AtomicI32 = AtomicI32::new(100);
 
     /// 逻辑像素 -> 物理像素
@@ -1084,27 +1084,51 @@ mod win {
     ) -> LRESULT {
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Ctx;
 
-        // 诊断：记录早期窗口消息
-        if msg == 0x0081 || msg == 0x0001 {
-            crate::utils::log(&format!("wndproc: msg=0x{:X}", msg));
-        }
-
         match msg {
             // WM_NCCREATE：必须返回 TRUE(1) 才能继续创建窗口
             0x0081 => 1,
+            // WM_SETCURSOR：始终用箭头光标，避免出现"忙碌转圈"
+            0x0020 => {
+                SetCursor(LoadCursorW(0, IDC_ARROW));
+                1
+            }
+            // WM_NCHITTEST：整个窗口都算客户区（保证鼠标事件可达）
+            0x0084 => 1, // HTCLIENT
             WM_CREATE => 0,
             m if m == WM_TRAYICON => {
                 if !ptr.is_null() {
                     // 托盘消息：鼠标事件在 lparam 低字，图标 ID 在高字
                     let ev = (lparam & 0xFFFF) as u32;
-                    crate::utils::log(&format!("ui: tray ev={}", ev));
                     if ev == WM_RBUTTONUP as u32 || ev == 0x007B {
-                        // 右键：显示窗口并展开「设置面板」
-                        // （TrackPopupMenu 在部分系统上会空白+卡死，故改用内嵌面板）
+                        // 右键：在光标处弹出托盘菜单
                         let ctx = &mut *ptr;
-                        ShowWindow(hwnd, SW_SHOW);
-                        SetForegroundWindow(hwnd);
-                        toggle_panel(hwnd, ctx, 2);
+                        let (auto_scan, auto_push, clear_clip, autostart, hotkey) =
+                            if let Ok(a) = ctx.app.lock() {
+                                (
+                                    a.session.settings.auto_scan,
+                                    a.session.settings.auto_push,
+                                    a.session.settings.clear_clipboard,
+                                    a.session.settings.autostart,
+                                    a.session.settings.hotkey.clone(),
+                                )
+                            } else {
+                                (true, false, true, true, "F1".to_string())
+                            };
+                        let cmd = ctx
+                            .tray
+                            .as_ref()
+                            .map(|t| {
+                                t.show_menu(
+                                    auto_scan,
+                                    auto_push,
+                                    clear_clip,
+                                    autostart,
+                                    &hotkey,
+                                    "auto",
+                                )
+                            })
+                            .unwrap_or(0);
+                        handle_tray_cmd(hwnd, ctx, cmd);
                     } else if ev == 0x0202 {
                         // 左键单击：切换显示 / 隐藏
                         if IsWindowVisible(hwnd) != 0 {
@@ -1200,7 +1224,6 @@ mod win {
                         return 0;
                     }
                     let hit = hit_test(x, y);
-                    crate::utils::log(&format!("ui: hit={:?}", hit));
                     match hit {
                         Some(Btn::History) => {
                             toggle_panel(hwnd, ctx, 1);
@@ -1306,9 +1329,15 @@ mod win {
         #[link(name = "user32")]
         extern "system" {
             fn SetProcessDPIAware() -> i32;
+            fn SetProcessDpiAwarenessContext(ctx: isize) -> i32;
         }
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+        // 优先用 V2（Win10 1703+，不虚拟化坐标），失败回退 SetProcessDPIAware
         unsafe {
-            SetProcessDPIAware();
+            let ok = SetProcessDpiAwarenessContext(-4);
+            if ok == 0 {
+                SetProcessDPIAware();
+            }
         }
     }
 
